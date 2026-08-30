@@ -980,10 +980,23 @@ pruefe('createcommand("::tk::mac::ShowHelp"' in _ab_main,
        "main() meldet den Hilfe-Befehl auch wirklich an")
 
 _bau_roh = pathlib.Path(__file__).with_name("bauen.sh").read_text()
-pruefe("codesign --force --deep --sign" in _bau_roh,
+pruefe("codesign --force --sign" in _bau_roh,
        "bauen.sh unterschreibt das Buendel")
 pruefe('IDENT="-"' in _bau_roh,
        "und faellt ohne Zertifikat auf ad hoc zurueck, statt abzubrechen")
+# `--deep` prueft die eingebetteten Teile vor dem Neu-Unterschreiben und
+# bricht ab, sobald eines nicht streng gueltig ist - meldet das, gibt aber
+# 0 zurueck und laesst die App ad hoc. So ist 1.1.0 beinahe unsigniert
+# hinausgegangen. Deshalb von innen nach aussen, und nachsehen statt hoffen.
+# Auf den Befehl schauen, nicht auf den Text: Der Kommentar daneben
+# erklaert ja gerade, warum --deep nicht taugt, und enthaelt das Wort.
+pruefe("--deep --sign" not in _bau_roh,
+       "bauen.sh unterschreibt nicht mehr mit --deep")
+pruefe("certificate root" in _bau_roh,
+       "und prüft hinterher nach, ob das Zertifikat wirklich drauf ist")
+_setup_roh_vorab = pathlib.Path(__file__).with_name("setup.py").read_text()
+pruefe('"PIL"' in _setup_roh_vorab,
+       "Pillow bleibt aus dem Mac-Bündel – dort wird es nie gebraucht")
 
 _setup_roh = pathlib.Path(__file__).with_name("setup.py").read_text()
 pruefe('"README.md"' in _setup_roh,

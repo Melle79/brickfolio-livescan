@@ -64,6 +64,14 @@ setup(
         "excludes": [
             "test", "setuptools", "pkg_resources", "distutils",
             "_distutils_hack", "packaging", "wheel", "pydoc_data",
+            # **Pillow gehoert nicht ins Mac-Buendel.** Dort erledigen
+            # sips und screencapture alles; Pillow ist allein fuer Windows
+            # da. Steht es in der Baustube (fuer die Proben des
+            # Windows-Wegs), packt py2app es sonst mit ein - samt libtiff,
+            # libjpeg und Verwandtschaft. Eine davon, liblzma, liess sich
+            # danach nicht mehr unterschreiben, und die App fiel still auf
+            # ad hoc zurueck.
+            "PIL",
         ],
         # Der Scanner liegt über anderen Fenstern und hat kein Dock-Symbol
         # nötig? Doch – man will ihn wiederfinden. Also normale App.
