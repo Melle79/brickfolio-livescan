@@ -46,7 +46,9 @@ setup(
     # einem fremden Mac nicht ("Cannot find a usable init.tcl") - py2app
     # nimmt nur die .dylib mit, nicht die .tcl-Dateien daneben.
     # livescan.py zeigt beim Start per TCL_LIBRARY/TK_LIBRARY hierher.
-    data_files=[("lib", _tcl_bibliotheken())],
+    # Das Handbuch reist mit: Der Hilfe-Eintrag im Menue oeffnet es, und
+    # das soll auch ohne Netz und ohne Zugang zum privaten Repo gehen.
+    data_files=[("lib", _tcl_bibliotheken()), ("", ["README.md"])],
     options={"py2app": {
         "iconfile": "livescan.icns",
         # Tkinter kommt nicht von allein mit – py2app findet es nur, wenn

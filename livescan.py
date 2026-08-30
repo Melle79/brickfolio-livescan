@@ -63,11 +63,12 @@ import urllib.error
 import urllib.parse
 import urllib.request
 import uuid
+import webbrowser
 from tkinter import ttk
 
 # Steht auch im Info.plist des Bündels. setup.py liest sie von hier,
 # damit sie nicht an zwei Stellen auseinanderläuft; pruefung.py wacht darüber.
-VERSION = "1.0.1"
+VERSION = "1.0.2"
 
 EINSTELLUNGEN = os.path.expanduser("~/.brickfolio-livescan.json")
 
@@ -2995,6 +2996,34 @@ class LiveScanner:
                   "Liste")
 
 
+def handbuch_pfad():
+    """Wo das Handbuch liegt - im Buendel oder neben dem Quelltext."""
+    if getattr(sys, "frozen", None) == "macosx_app":
+        ort = os.path.join(os.path.dirname(sys.executable),
+                           os.pardir, "Resources", "README.md")
+    else:
+        ort = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                           "README.md")
+    ort = os.path.normpath(ort)
+    return ort if os.path.exists(ort) else None
+
+
+def handbuch_zeigen():
+    """Haengt am Hilfe-Menue von macOS.
+
+    Ohne diesen Befehl antwortet macOS mit "Help isn't available for
+    Brickfolio Live-Scanner" - das Menue ist naemlich immer da, nur ohne
+    Hinterlegung. Das Handbuch ist das README; es reist im Buendel mit,
+    damit die Hilfe auch ohne Netz und ohne Zugriff auf das (private)
+    Repo etwas zeigt.
+    """
+    ort = handbuch_pfad()
+    if ort:
+        subprocess.run(["open", ort], check=False)
+    else:
+        webbrowser.open("https://github.com/Melle79/brickfolio-livescan#readme")
+
+
 def main():
     # Apples mitgeliefertes Tk 8.5 zeichnet auf heutigem macOS nur ein weißes
     # Fenster und kann kein PNG. Lieber offen sagen, was fehlt, als den
@@ -3010,6 +3039,8 @@ def main():
     # Was ein früherer Absturz an Ausschnitten liegen ließ, kommt jetzt weg.
     reste_aufraeumen()
     wurzel = tk.Tk()
+    # Muss vor mainloop stehen; danach fragt macOS nicht mehr nach.
+    wurzel.createcommand("::tk::mac::ShowHelp", handbuch_zeigen)
     app = LiveScanner(wurzel)
     if app.instanz.token:
         app.listen_laden()

@@ -896,6 +896,34 @@ pruefe("🛒" not in livescan._woanders(AUF_LISTE),
 pruefe("7931-1" in livescan._woanders(IN_SET),
        "das eigene Set steht weiterhin als Hinweis darunter")
 
+# ==================================================== Hilfe-Menue
+# macOS legt den Hilfe-Eintrag von sich aus an. Ohne hinterlegten Befehl
+# antwortet es "Help isn't available for Brickfolio Live-Scanner" - genau
+# so trat es auf am 30.08.2026.
+abschnitt("10. Die Hilfe zeigt das Handbuch")
+_w = tk.Tk(); _w.withdraw()
+_w.createcommand("::tk::mac::ShowHelp", livescan.handbuch_zeigen)
+pruefe(_w.eval("info commands ::tk::mac::ShowHelp").strip() != "",
+       "der Befehl haengt am Hilfe-Menue")
+_w.destroy()
+
+pruefe(livescan.handbuch_pfad() is not None,
+       "das Handbuch wird neben dem Quelltext gefunden")
+pruefe(os.path.basename(livescan.handbuch_pfad()) == "README.md",
+       "und es ist das README")
+# Die Probe oben meldet den Befehl selbst an - sie wuerde also auch
+# bestehen, wenn main() das Anmelden vergisst. Darum hier zusaetzlich in
+# den Quelltext geschaut.
+_scan_roh = pathlib.Path(livescan.__file__).read_text()
+_ab_main = _scan_roh[_scan_roh.index("def main():"):]
+pruefe('createcommand("::tk::mac::ShowHelp"' in _ab_main,
+       "main() meldet den Hilfe-Befehl auch wirklich an")
+
+_setup_roh = pathlib.Path(__file__).with_name("setup.py").read_text()
+pruefe('"README.md"' in _setup_roh,
+       "das Buendel nimmt das Handbuch mit - sonst zeigt die Hilfe im\n"
+       "       fertigen Programm ins Leere")
+
 # ================================================ Bauvorschrift
 # Die Fassung steht in livescan.py; setup.py schreibt sie ins Info.plist des
 # Bündels. Läuft das auseinander, zeigt die fertige App eine falsche Nummer –
