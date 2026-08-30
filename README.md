@@ -630,9 +630,35 @@ MIT, wie Brickfolio selbst.
 ## Einbauen
 
 Unter [Releases](https://github.com/Melle79/brickfolio-livescan/releases)
-liegt bei jeder Fassung ein ZIP. Herunterladen, entpacken, die App nach
-**Programme** ziehen – fertig. Sie bringt Python und Tk selbst mit, es muss
-nichts weiter installiert sein.
+liegt bei jeder Fassung ein ZIP. Die App bringt Python und Tk selbst mit,
+es muss nichts weiter installiert sein.
+
+### Der bequeme Weg: am Terminal laden
+
+    gh release download --repo Melle79/brickfolio-livescan \
+        --pattern '*.zip' --clobber --dir /tmp/bfls
+    rm -rf "/Applications/Brickfolio Live-Scanner.app"
+    ditto -x -k /tmp/bfls/*.zip /Applications
+
+Danach startet sie **ohne jede Nachfrage**. Der Grund ist unscheinbar,
+aber der ganze Unterschied: Das Quarantäne-Merkmal, an dem sich macOS
+stört, setzt weder GitHub noch die Datei – es setzt der **Browser** beim
+Herunterladen. `gh` und `curl` tun das nicht, also entsteht es nie.
+
+Nachgemessen: Am Browser-Download hängt `com.apple.quarantine`, am
+Terminal-Download nur ein harmloses `com.apple.provenance`. `spctl`
+verweigert die App zwar in beiden Fällen (sie ist nicht notarisiert),
+aber dieses Urteil wird nur bei Dateien *mit* Quarantäne-Merkmal
+vollstreckt.
+
+Das gilt auch für jede spätere Fassung. Über den Browser käme der Dialog
+jedes Mal wieder – die Signatur ändert sich mit jedem Bau, macOS erkennt
+die einmal erteilte Erlaubnis also nicht wieder.
+
+### Über den Browser
+
+Herunterladen, entpacken, die App nach **Programme** ziehen. Dann greift
+die Sperre, siehe unten.
 
 **Beim allerersten Start** blockt macOS ab: „Apple konnte nicht überprüfen,
 ob *Brickfolio Live-Scanner* frei von Schadsoftware ist", mit den Knöpfen
