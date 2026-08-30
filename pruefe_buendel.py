@@ -47,6 +47,17 @@ def main(app):
         print("      Ohne das startet die App nur dort, wo Homebrew-Tcl liegt.")
         return 1
 
+    # Laeuft schon eine Instanz, beendet sich die zweite sofort mit 0 -
+    # und das sieht hier wie ein Absturz aus. Zweimal heute darauf
+    # hereingefallen; jetzt sagt es, was los ist, statt Alarm zu schlagen.
+    laeuft = subprocess.run(["pgrep", "-f", os.path.basename(exe)],
+                            capture_output=True, text=True)
+    if laeuft.stdout.strip():
+        print("FEHL: es laeuft schon eine Instanz (PID %s)."
+              % laeuft.stdout.split()[0])
+        print("      Erst beenden, sonst misst diese Pruefung nichts.")
+        return 1
+
     umgebung = dict(os.environ)
 
     p = subprocess.Popen([exe], stdout=subprocess.PIPE,
