@@ -1,13 +1,15 @@
 # Brickfolio Live-Scanner
 
-Ein kleines Fenster für den Mac, das über allem liegt. Rahmen um die Figur
-ziehen, fertig – der Treffer steht mit Nummer, Ø-Preisen und „habt ihr
-schon" da, und auf Knopfdruck landet er in der Sammlung, auf der
-Wunschliste oder auf einer Einkaufsliste.
+Ein kleines Fenster, das über allem liegt. Rahmen um die Figur ziehen,
+fertig – der Treffer steht mit Nummer, Ø-Preisen und „habt ihr schon" da,
+und auf Knopfdruck landet er in der Sammlung, auf der Wunschliste oder auf
+einer Einkaufsliste.
 
 Gedacht für Auktions-Streams: eBay Live läuft im einen Fenster, dieses
-liegt daneben. Statt Bildschirmfoto machen, Finder öffnen, ins Scannen-Feld
-ziehen – ein Klick, ein Rahmen.
+liegt daneben. Statt Bildschirmfoto machen, Dateien suchen, ins
+Scannen-Feld ziehen – ein Klick, ein Rahmen.
+
+Läuft auf **macOS** (Apple Silicon) und auf **Windows**.
 
 
 
@@ -631,7 +633,41 @@ ein paar Sekunden durch und sagt am Ende, was durchgefallen ist.
 
 MIT, wie Brickfolio selbst.
 
-## Einbauen
+## Einbauen unter Windows
+
+Unter [Releases](https://github.com/Melle79/brickfolio-livescan/releases)
+liegt neben dem Mac-Paket ein
+`Brickfolio-Live-Scanner-Windows-x64.zip`. Entpacken, den Ordner ablegen,
+wo er bleiben soll, und `Brickfolio Live-Scanner.exe` starten.
+
+**Beim ersten Start warnt SmartScreen** („Der Computer wurde durch
+Windows geschützt"). Das Programm ist nicht signiert – dafür bräuchte es
+ein Zertifikat, das Geld kostet. Auf **Weitere Informationen** klicken,
+dann **Trotzdem ausführen**. Danach kommt die Warnung nicht wieder.
+
+Es braucht **keine** Berechtigung für Bildschirmaufnahmen – anders als
+auf dem Mac fragt Windows danach nicht.
+
+### Was dort anders ist
+
+| | macOS | Windows |
+|---|---|---|
+| Rahmen ziehen | Apples eigene Auswahl, wie ⌘⇧4 | Abbild des Bildschirms, Rahmen mit der Maus |
+| Ton | Klang aus dem System | Systemklang |
+| Bildarbeit | `sips`, im System enthalten | Pillow, im Paket enthalten |
+
+Der Rahmen fühlt sich also etwas anders an: Statt eines durchsichtigen
+Auswahlfelds erscheint ein Fenster mit einem Abbild des Bildschirms, und
+darin zieht man. Es ist derselbe Weg, den auch der Mac bei „Bereich
+merken" nimmt.
+
+**Zur Bildschirmskalierung.** Läuft Windows auf 125 % oder 150 %, ist das
+Abbild etwas weicher als der echte Bildschirm. Der gezogene Rahmen trifft
+trotzdem genau das, was man gesehen hat – das war die wichtigere der
+beiden Eigenschaften. Sollte die Erkennung auf einem skalierten Bildschirm
+schwächeln, steht im Quelltext bei `schirmfoto` die Stellschraube.
+
+## Einbauen auf dem Mac
 
 Unter [Releases](https://github.com/Melle79/brickfolio-livescan/releases)
 liegt bei jeder Fassung ein ZIP. Die App bringt Python und Tk selbst mit,

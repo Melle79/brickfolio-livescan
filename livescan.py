@@ -69,7 +69,7 @@ from tkinter import ttk
 
 # Steht auch im Info.plist des Bündels. setup.py liest sie von hier,
 # damit sie nicht an zwei Stellen auseinanderläuft; pruefung.py wacht darüber.
-VERSION = "1.0.4"
+VERSION = "1.1.0"
 
 # Auf welchem System laufen wir? Der Mac-Weg bleibt unangetastet; fuer
 # Windows stehen daneben eigene Zweige. Alles andere (Linux) faellt auf den
