@@ -754,10 +754,28 @@ es auch:
     security import schluessel.pem -k ~/Library/Keychains/login.keychain-db \
         -T /usr/bin/codesign
 
-`security find-identity -v -p codesigning` meldet danach weiterhin *0
-valid identities* – das ist in Ordnung: Es fehlt nur die
-Vertrauenseinstellung, und `codesign` braucht sie nicht. Die beiden
-`.pem`-Dateien danach löschen, der Schlüssel liegt im Schlüsselbund. Gebraucht wird ein Python
+Und dann – **dieser Schritt ist der entscheidende**:
+
+    security add-trusted-cert -r trustRoot -p codeSign \
+        -k ~/Library/Keychains/login.keychain-db zert.pem
+
+> ⚠️ **Nicht weglassen, auch wenn `codesign` ohne ihn funktioniert.**
+> Genau daran bin ich am 30.08.2026 gescheitert: Ich hatte geprüft, dass
+> `codesign` das Zertifikat zum *Unterschreiben* nimmt, und daraus
+> geschlossen, das Vertrauen sei entbehrlich. Zum Unterschreiben ist es
+> das auch. Aber macOS merkt sich die Freigabe für die Bildschirmaufnahme
+> als Anforderung an die **Zertifikatskette** – und die lässt sich ohne
+> Vertrauen nicht bestätigen. Die Freigabe hielt deshalb überhaupt nicht
+> mehr, schlechter als mit ad hoc.
+>
+> Die Probe darauf ist `security verify-cert -c zert.pem -p codeSign`.
+> Solange dort `CSSMERR_TP_NOT_TRUSTED` steht, ist es nicht getan.
+> `security find-identity -v -p codesigning` muss danach
+> *1 valid identities found* melden, nicht 0.
+
+Das Vertrauen gilt nur für **deinen Benutzer** und nur für
+**Codesignatur**, nicht allgemein. Die beiden `.pem`-Dateien danach
+löschen – der Schlüssel liegt im Schlüsselbund. Gebraucht wird ein Python
 mit brauchbarem Tk – das Python aus macOS bringt ein zu altes mit und
 zeichnet nur ein weißes Fenster. Unter Homebrew: `brew install python-tk`.
 
