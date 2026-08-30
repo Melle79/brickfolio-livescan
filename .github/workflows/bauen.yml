@@ -43,13 +43,39 @@ jobs:
       - name: Bündeln
         run: .venv-bau/bin/python setup.py py2app
 
-      - name: Beweisen, dass das Bündel läuft
-        # Wichtiger als "Done!": Das *gebuendelte* Python muss die Proben
-        # bestehen. Sonst fehlt drinnen etwas, was draussen noch da war.
+      - name: Beweisen, dass das Bündel laeuft
+        # **Nicht ueber Contents/MacOS/python pruefen.** Das ist nur ein
+        # Hilfsinterpreter fuer Unterprozesse und findet seine Bibliothek
+        # noch ueber das Praefix der *Baumaschine*. Auf dem Runner geht er
+        # deshalb immer - auch wenn das Buendel voellig unbrauchbar waere.
+        # Der einzige ehrliche Nachweis ist der echte Starter.
         run: |
-          BP="dist/Brickfolio Live-Scanner.app/Contents/MacOS/python"
-          "$BP" -c "import tkinter, sys; print(sys.version, 'Tk', tkinter.TkVersion)"
-          "$BP" pruefung.py
+          "dist/Brickfolio Live-Scanner.app/Contents/MacOS/Brickfolio Live-Scanner" &
+          PID=$!
+          sleep 15
+          if kill -0 "$PID" 2>/dev/null; then
+            echo "Die App laeuft."
+            kill "$PID"
+          else
+            echo "::error::Die gebuendelte App ist beim Start gestorben."
+            exit 1
+          fi
+
+      - name: Nichts zeigt auf die Baumaschine
+        # Der Runner hat Homebrew unter /opt/homebrew. Zeigt eine
+        # eingebundene Bibliothek noch dorthin, laeuft die App hier - und
+        # bei jedem, der Homebrew anders oder gar nicht hat, nicht.
+        run: |
+          APP="dist/Brickfolio Live-Scanner.app"
+          FREMD=$(find "$APP" -type f -perm -111 -print0 \
+            | xargs -0 -n1 otool -L 2>/dev/null \
+            | grep -E "^\s+/(opt|usr/local)/" | sort -u || true)
+          if [ -n "$FREMD" ]; then
+            echo "$FREMD"
+            echo "::error::Das Buendel haengt noch an Homebrew der Baumaschine."
+            exit 1
+          fi
+          echo "Keine Bindung an /opt oder /usr/local."
 
       - name: Unterschreiben (ad hoc)
         # Ohne Signatur laesst macOS auf arm64 gar nichts starten. Ad hoc
