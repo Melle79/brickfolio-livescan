@@ -896,6 +896,39 @@ pruefe("🛒" not in livescan._woanders(AUF_LISTE),
 pruefe("7931-1" in livescan._woanders(IN_SET),
        "das eigene Set steht weiterhin als Hinweis darunter")
 
+# ============================================ Immer vorn abschaltbar
+# Das Fenster liegt über allem - dafür ist es da. Aber Fenster anderer
+# Programme gingen dahinter auf und blieben unauffindbar. Der Haken nimmt
+# die Ebene weg, ohne den Standard zu ändern.
+abschnitt("9c. Der Haken »Immer vorn«")
+wurzel, app = fenster()
+pruefe(app.immer_vorn.get() is True, "voreingestellt liegt es vorn")
+pruefe(wurzel.attributes("-topmost") in (1, True),
+       "und das Fenster steht auch wirklich oben")
+
+app.immer_vorn.set(False)
+app._vorn_merken()
+takt(wurzel, 150)
+pruefe(wurzel.attributes("-topmost") in (0, False),
+       "Haken weg -> das Fenster gibt die Ebene frei")
+pruefe(app.daten.get("immer_vorn") is False,
+       "und die Wahl überlebt den Neustart")
+
+# Nach einem Popup darf die Ebene nicht heimlich zurückkommen.
+app.immer_vorn.set(False)
+wurzel.attributes("-topmost", False)
+app._vorn_merken()
+takt(wurzel, 120)
+pruefe(wurzel.attributes("-topmost") in (0, False),
+       "auch nach dem Schließen eines Popups bleibt sie weg")
+
+app.immer_vorn.set(True)
+app._vorn_merken()
+takt(wurzel, 120)
+pruefe(wurzel.attributes("-topmost") in (1, True),
+       "Haken wieder dran -> wieder oben")
+wurzel.destroy()
+
 # ==================================================== Hilfe-Menue
 # macOS legt den Hilfe-Eintrag von sich aus an. Ohne hinterlegten Befehl
 # antwortet es "Help isn't available for Brickfolio Live-Scanner" - genau

@@ -68,7 +68,7 @@ from tkinter import ttk
 
 # Steht auch im Info.plist des Bündels. setup.py liest sie von hier,
 # damit sie nicht an zwei Stellen auseinanderläuft; pruefung.py wacht darüber.
-VERSION = "1.0.3"
+VERSION = "1.0.4"
 
 EINSTELLUNGEN = os.path.expanduser("~/.brickfolio-livescan.json")
 
@@ -1074,7 +1074,9 @@ class LiveScanner:
         self.fotos = set()
 
         wurzel.title("Brickfolio Live-Scanner")
-        wurzel.attributes("-topmost", True)
+        # Der Haken »Immer vorn« entscheidet; voreingestellt bleibt es an.
+        wurzel.attributes("-topmost",
+                          bool(self.daten.get("immer_vorn", True)))
         self._bauen()
         self._hoehe_festlegen()
         wurzel.after(120, self._post_abarbeiten)
@@ -1354,6 +1356,15 @@ class LiveScanner:
         ttk.Checkbutton(
             haken, variable=self.nur_figuren, command=self._figuren_merken,
             text="🧍 Nur Figuren").pack(side="left", padx=(14, 0))
+        # Das Fenster liegt über allem, damit man den Stream weiter sieht.
+        # Der Preis: Fenster **anderer** Programme gehen dahinter auf, und
+        # man sucht sie. Wer gerade nicht scannt, nimmt den Haken weg.
+        # Voreinstellung bleibt „an" – so war es immer.
+        self.immer_vorn = tk.BooleanVar(
+            value=bool(self.daten.get("immer_vorn", True)))
+        ttk.Checkbutton(
+            haken, variable=self.immer_vorn, command=self._vorn_merken,
+            text="📌 Immer vorn").pack(side="left", padx=(14, 0))
 
         ttk.Separator(r).pack(fill="x", pady=4)
 
@@ -1630,6 +1641,14 @@ class LiveScanner:
         self.daten["foto_mitschicken"] = bool(self.mitschicken.get())
         schreiben(self.daten)
 
+    def _vorn_merken(self):
+        an = bool(self.immer_vorn.get())
+        self.daten["immer_vorn"] = an
+        schreiben(self.daten)
+        self.wurzel.attributes("-topmost", an)
+        self.melden("Das Fenster bleibt über allem." if an else
+                    "Andere Fenster dürfen jetzt davor.")
+
     def _figuren_merken(self):
         self.daten["nur_figuren"] = bool(self.nur_figuren.get())
         schreiben(self.daten)
@@ -1709,10 +1728,12 @@ class LiveScanner:
                 f.grab_release()
             except tk.TclError:
                 pass
-            # Das Hauptfenster bekommt seine Ebene zurück – es soll ja über
-            # dem Stream bleiben.
+            # Das Hauptfenster bekommt die Ebene zurück, die der Haken
+            # vorgibt – nicht stur „oben". Sonst käme das Fenster nach jedem
+            # Popup wieder nach vorn, obwohl der Haken weg ist.
             try:
-                self.wurzel.attributes("-topmost", True)
+                self.wurzel.attributes(
+                    "-topmost", bool(self.immer_vorn.get()))
             except tk.TclError:
                 pass
             f.destroy()
