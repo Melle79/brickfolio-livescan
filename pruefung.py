@@ -622,9 +622,21 @@ pruefe(app.leinwand.yview()[0] == stand,
 zweit.destroy()
 
 # Und wenn nichts zu schieben ist, passiert nichts.
+#
+# **Nicht auf Platz hoffen.** Frueher zog diese Probe das Fenster auf
+# Bildschirmhoehe und nahm an, dann passe der Inhalt hinein. Auf des Anwenders
+# 2160-px-Schirm stimmte das, auf dem Bau-Runner nicht - dort scheiterte
+# sie, obwohl nichts kaputt war. Also andersherum: den Inhalt so lange
+# kleiner machen, bis er hineinpasst, und das vorher nachweisen.
 app.verlauf.config(height=1)
-wurzel.geometry("560x%d" % (wurzel.winfo_screenheight() - 80))
+wurzel.geometry("560x%d" % min(900, wurzel.winfo_screenheight() - 80))
 takt(wurzel, 250)
+uebrig = list(app.innen.pack_slaves())
+while app.innen.winfo_reqheight() > app.leinwand.winfo_height() and uebrig:
+    uebrig.pop().pack_forget()
+    takt(wurzel, 150)
+pruefe(app.innen.winfo_reqheight() <= app.leinwand.winfo_height(),
+       "Voraussetzung: der Inhalt passt jetzt in die Flaeche")
 app.leinwand.yview_moveto(0.0)
 app._rad(Rad(app.leinwand, -3))
 wurzel.update_idletasks()
