@@ -919,6 +919,12 @@ _ab_main = _scan_roh[_scan_roh.index("def main():"):]
 pruefe('createcommand("::tk::mac::ShowHelp"' in _ab_main,
        "main() meldet den Hilfe-Befehl auch wirklich an")
 
+_bau_roh = pathlib.Path(__file__).with_name("bauen.sh").read_text()
+pruefe("codesign --force --deep --sign" in _bau_roh,
+       "bauen.sh unterschreibt das Buendel")
+pruefe('IDENT="-"' in _bau_roh,
+       "und faellt ohne Zertifikat auf ad hoc zurueck, statt abzubrechen")
+
 _setup_roh = pathlib.Path(__file__).with_name("setup.py").read_text()
 pruefe('"README.md"' in _setup_roh,
        "das Buendel nimmt das Handbuch mit - sonst zeigt die Hilfe im\n"

@@ -709,9 +709,55 @@ Ausschnitts ein schwarzes Bild.
 
     python3 -m venv .venv-bau
     .venv-bau/bin/python -m pip install py2app
-    .venv-bau/bin/python setup.py py2app
+    sh bauen.sh
 
-Danach liegt `dist/Brickfolio Live-Scanner.app`. Gebraucht wird ein Python
+Danach liegt `dist/Brickfolio Live-Scanner.app`.
+
+### Warum örtlich gebaut besser ist
+
+`bauen.sh` unterschreibt mit dem selbst ausgestellten Zertifikat
+**Brickfolio Selbstsigniert** aus dem Anmeldeschlüsselbund. Das klingt
+nach Formalie, entscheidet aber darüber, ob die Freigabe für die
+**Bildschirmaufnahme** ein Update überlebt:
+
+| Unterschrift | Woran macOS die App wiedererkennt |
+|---|---|
+| ad hoc | `cdhash H"…"` – der Fingerabdruck, **neu bei jedem Bau** |
+| Zertifikat | `identifier … and certificate root = H"…"` – **bleibt** |
+
+Ist sie ad hoc unterschrieben, hält macOS jede neue Fassung für eine
+fremde App. Der Eintrag in *Datenschutz & Sicherheit* bleibt stehen,
+gehört aber zu nichts mehr, und Umschalten bewirkt nichts. Man muss dann
+jedes Mal aufräumen:
+
+    tccutil reset ScreenCapture cc.brickfolio.livescan
+
+**Der Bau-Runner hat den privaten Schlüssel nicht** und unterschreibt
+deshalb ad hoc. Das ZIP am Release wird daher örtlich gebaut und
+hochgeladen; der Runner prüft weiterhin jeden Stand.
+
+Gegen die Gatekeeper-Sperre beim Herunterladen hilft das Zertifikat
+**nicht** – dafür bräuchte es ein Apple-Entwicklerkonto (99 €/Jahr).
+
+### Das Zertifikat neu anlegen
+
+Falls es einmal fehlt – `bauen.sh` fällt dann auf ad hoc zurück und sagt
+es auch:
+
+    openssl req -x509 -newkey rsa:2048 -nodes -days 3650 \
+        -keyout schluessel.pem -out zert.pem \
+        -subj "/CN=Brickfolio Selbstsigniert/O=Melle79" \
+        -addext "basicConstraints=critical,CA:false" \
+        -addext "keyUsage=critical,digitalSignature" \
+        -addext "extendedKeyUsage=critical,codeSigning"
+    security import zert.pem -k ~/Library/Keychains/login.keychain-db
+    security import schluessel.pem -k ~/Library/Keychains/login.keychain-db \
+        -T /usr/bin/codesign
+
+`security find-identity -v -p codesigning` meldet danach weiterhin *0
+valid identities* – das ist in Ordnung: Es fehlt nur die
+Vertrauenseinstellung, und `codesign` braucht sie nicht. Die beiden
+`.pem`-Dateien danach löschen, der Schlüssel liegt im Schlüsselbund. Gebraucht wird ein Python
 mit brauchbarem Tk – das Python aus macOS bringt ein zu altes mit und
 zeichnet nur ein weißes Fenster. Unter Homebrew: `brew install python-tk`.
 

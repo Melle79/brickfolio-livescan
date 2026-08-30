@@ -40,8 +40,13 @@ jobs:
         # erst beim Anwender.
         run: .venv-bau/bin/python pruefung.py
 
-      - name: Bündeln
-        run: .venv-bau/bin/python setup.py py2app
+      - name: Bündeln und unterschreiben
+        # bauen.sh nimmt das gleichbleibende Zertifikat, wenn es im
+        # Schluesselbund liegt. Der Runner hat den privaten Schluessel
+        # nicht, also unterschreibt er ad hoc - und die so gebaute App
+        # verliert bei jedem Update die Freigabe fuer die Bildschirm-
+        # aufnahme. Wer sie behalten will, baut oertlich (siehe README).
+        run: PYTHON=.venv-bau/bin/python sh bauen.sh
 
       - name: Beweisen, dass das Bündel laeuft
         # pruefe_buendel.py sieht erst nach, ob die Skript-Bibliothek von
@@ -67,12 +72,6 @@ jobs:
             exit 1
           fi
           echo "Keine Bindung an /opt oder /usr/local."
-
-      - name: Unterschreiben (ad hoc)
-        # Ohne Signatur laesst macOS auf arm64 gar nichts starten. Ad hoc
-        # reicht dafuer; die Gatekeeper-Warnung bleibt trotzdem, dagegen
-        # hilft nur ein Apple-Entwicklerkonto.
-        run: codesign --force --deep --sign - "dist/Brickfolio Live-Scanner.app"
 
       - name: Einpacken
         # ditto statt zip: nur ditto erhaelt Symlinks und Rechte im

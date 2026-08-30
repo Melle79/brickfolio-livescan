@@ -68,7 +68,7 @@ from tkinter import ttk
 
 # Steht auch im Info.plist des Bündels. setup.py liest sie von hier,
 # damit sie nicht an zwei Stellen auseinanderläuft; pruefung.py wacht darüber.
-VERSION = "1.0.2"
+VERSION = "1.0.3"
 
 EINSTELLUNGEN = os.path.expanduser("~/.brickfolio-livescan.json")
 
