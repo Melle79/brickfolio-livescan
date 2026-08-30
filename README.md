@@ -29,14 +29,17 @@ der App, genau wie es der Browser tut:
 
 ## Starten
 
-Am bequemsten über **„Brickfolio Live-Scanner"** auf dem Schreibtisch. Sonst:
+**Brickfolio Live-Scanner** aus dem Programme-Ordner – siehe *Einbauen*
+weiter unten. Die App bringt Python und Tk selbst mit.
+
+Aus dem Quelltext heraus, zum Entwickeln:
 
 ```bash
-sh /Users/nutzer/dev/brickfolio-livescan/start.sh
+sh start.sh
 ```
 
 Es braucht **keine** Fremdbibliotheken – aber ein Python mit **Tk 8.6 oder
-neuer**.
+neuer**. Nur dieser Weg, nicht die fertige App.
 
 > ⚠️ **Nicht das Python aus macOS nehmen.** `/usr/bin/python3` bringt
 > **Tk 8.5** mit, Apples altes und auf heutigem macOS kaputtes Fenster-Werk:
@@ -44,7 +47,8 @@ neuer**.
 > erst mit 8.6), also gäbe es weder Vorschau noch Bereichsauswahl.
 >
 > `start.sh` probiert deshalb der Reihe nach durch und nimmt das erste
-> taugliche – auf diesem Rechner das aus Homebrew (Tk 9.0). Startet ihr
+> taugliche – hier das aus Homebrew (Tk 9.0). Die fertige App hat das
+> Problem nicht, sie trägt ihr Tk 9.0 im Bündel. Startet ihr
 > `livescan.py` direkt mit einem zu alten Python, sagt es das und beendet
 > sich, statt euch vor eine leere Fläche zu setzen.
 
