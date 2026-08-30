@@ -418,8 +418,14 @@ wurzel.destroy()
 roh = open(livescan.VERLAUF_DATEI).read()
 pruefe("altes-bild" not in roh and "neues-bild" not in roh,
        "keine Aufnahme steht in der Datei")
-pruefe(oct(os.stat(livescan.VERLAUF_DATEI).st_mode)[-3:] == "600",
-       "die Datei ist nur für den Benutzer lesbar")
+if livescan.IST_WINDOWS:
+    # Windows kennt diese Rechte nicht; dort schützt allein, dass die Datei
+    # im Benutzerprofil liegt. Lieber ehrlich überspringen, als so zu tun,
+    # als wäre etwas geprüft.
+    print("     (Windows kennt keine 0600-Rechte – Probe entfällt)")
+else:
+    pruefe(oct(os.stat(livescan.VERLAUF_DATEI).st_mode)[-3:] == "600",
+           "die Datei ist nur für den Benutzer lesbar")
 
 wurzel, app = fenster()
 zeilen = [app.verlauf.get(i) for i in range(app.verlauf.size())]
