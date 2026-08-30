@@ -44,22 +44,13 @@ jobs:
         run: .venv-bau/bin/python setup.py py2app
 
       - name: Beweisen, dass das Bündel laeuft
-        # **Nicht ueber Contents/MacOS/python pruefen.** Das ist nur ein
-        # Hilfsinterpreter fuer Unterprozesse und findet seine Bibliothek
-        # noch ueber das Praefix der *Baumaschine*. Auf dem Runner geht er
-        # deshalb immer - auch wenn das Buendel voellig unbrauchbar waere.
-        # Der einzige ehrliche Nachweis ist der echte Starter.
-        run: |
-          "dist/Brickfolio Live-Scanner.app/Contents/MacOS/Brickfolio Live-Scanner" &
-          PID=$!
-          sleep 15
-          if kill -0 "$PID" 2>/dev/null; then
-            echo "Die App laeuft."
-            kill "$PID"
-          else
-            echo "::error::Die gebuendelte App ist beim Start gestorben."
-            exit 1
-          fi
+        # pruefe_buendel.py sieht erst nach, ob die Skript-Bibliothek von
+        # Tcl im Buendel liegt (ein Startversuch kann das *nicht* zeigen -
+        # Tcl faellt auf den Homebrew-Pfad des Runners zurueck), und liest
+        # danach die Ausgabe des echten Starters. "Prozess lebt noch" allein
+        # ist wertlos: py2app haelt den Prozess auch bei einem Startfehler
+        # am Leben und zeigt nur einen Dialog.
+        run: .venv-bau/bin/python pruefe_buendel.py "dist/Brickfolio Live-Scanner.app"
 
       - name: Nichts zeigt auf die Baumaschine
         # Der Runner hat Homebrew unter /opt/homebrew. Zeigt eine

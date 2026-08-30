@@ -12,6 +12,7 @@ Annahme, es liege ein Python mit brauchbarem Tk herum. Das macOS-eigene
 Python bringt ein zu altes Tk mit und zeichnet nur ein weißes Fenster –
 also lief es genau auf einem Rechner.
 """
+import os
 import pathlib
 import re
 
@@ -19,13 +20,33 @@ from setuptools import setup
 
 # Aus livescan.py *gelesen*, nicht importiert: ein Import zöge tkinter mit,
 # und py2app soll setup.py auch dort ausführen können, wo kein Tk steht.
+def _tcl_bibliotheken():
+    """Die beiden Skript-Ordner von Tcl und Tk, oder ein klarer Abbruch.
+
+    Lieber hier laut scheitern als ein Buendel ausliefern, das nur auf
+    Rechnern mit Homebrew-Tcl startet.
+    """
+    stamm = "/opt/homebrew/opt/tcl-tk/lib"
+    ordner = [os.path.join(stamm, n) for n in ("tcl9.0", "tk9.0")]
+    fehlt = [o for o in ordner if not os.path.isdir(o)]
+    if fehlt:
+        raise SystemExit(
+            "Die Skript-Bibliothek von Tcl/Tk fehlt: %s\n"
+            "Abhilfe:  brew install tcl-tk python-tk" % ", ".join(fehlt))
+    return ordner
+
+
 VERSION = re.search(r'^VERSION = "([^"]+)"',
                     pathlib.Path("livescan.py").read_text(),
                     re.M).group(1)
 
 setup(
     app=["livescan.py"],
-    data_files=[],
+    # Die Skript-Bibliothek von Tcl/Tk. Ohne sie startet das Buendel auf
+    # einem fremden Mac nicht ("Cannot find a usable init.tcl") - py2app
+    # nimmt nur die .dylib mit, nicht die .tcl-Dateien daneben.
+    # livescan.py zeigt beim Start per TCL_LIBRARY/TK_LIBRARY hierher.
+    data_files=[("lib", _tcl_bibliotheken())],
     options={"py2app": {
         "iconfile": "livescan.icns",
         # Tkinter kommt nicht von allein mit – py2app findet es nur, wenn

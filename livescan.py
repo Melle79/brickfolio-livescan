@@ -43,6 +43,21 @@ import sys
 import tempfile
 import threading
 import time
+# --------------------------------------------------------------- Tcl/Tk
+# **Vor** dem tkinter-Import, darum steht der Block mitten zwischen den
+# Importen. py2app kopiert zwar libtcl und libtk ins Buendel, aber nicht
+# deren Skript-Bibliothek (init.tcl und Verwandtschaft). Tcl sucht sie
+# dann am einkompilierten Pfad der Baumaschine und bricht mit
+# "Cannot find a usable init.tcl" ab - beim Anwender, nicht beim Bauen.
+# setup.py legt die Bibliothek unter Resources/lib ab; hier zeigen wir
+# darauf. Ausserhalb eines Buendels passiert nichts.
+if getattr(sys, "frozen", None) == "macosx_app":
+    _mit = os.path.join(os.path.dirname(sys.executable), os.pardir, "Resources")
+    for _var, _name in (("TCL_LIBRARY", "tcl9.0"), ("TK_LIBRARY", "tk9.0")):
+        _weg = os.path.normpath(os.path.join(_mit, "lib", _name))
+        if os.path.isdir(_weg):
+            os.environ[_var] = _weg
+
 import tkinter as tk
 import urllib.error
 import urllib.parse
@@ -52,7 +67,7 @@ from tkinter import ttk
 
 # Steht auch im Info.plist des Bündels. setup.py liest sie von hier,
 # damit sie nicht an zwei Stellen auseinanderläuft; pruefung.py wacht darüber.
-VERSION = "1.0.0"
+VERSION = "1.0.1"
 
 EINSTELLUNGEN = os.path.expanduser("~/.brickfolio-livescan.json")
 
