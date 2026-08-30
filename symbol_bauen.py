@@ -136,7 +136,8 @@ def main(quelle):
         # 1024 laesst sich aus 512 nicht ehrlich gewinnen - also weglassen.
         for kante, name in ((16, "16x16"), (32, "16x16@2x"), (32, "32x32"),
                             (64, "32x32@2x"), (128, "128x128"),
-                            (256, "128x128@2x"), (256, "256x256"),
+                            (48, "48x48"), (256, "128x128@2x"),
+                            (256, "256x256"),
                             (512, "256x256@2x"), (512, "512x512")):
             ziel = os.path.join(satz, "icon_%s.png" % name)
             subprocess.run(["sips", "-z", str(kante), str(kante), gross,
@@ -145,7 +146,41 @@ def main(quelle):
         subprocess.run(["iconutil", "-c", "icns", satz,
                         "-o", "livescan.icns"], check=True)
         subprocess.run(["cp", gross, "symbol-vorschau.png"], check=True)
-    print("livescan.icns gebaut, Vorschau in symbol-vorschau.png")
+        ico_bauen(satz, "livescan.ico")
+    print("livescan.icns und livescan.ico gebaut, "
+          "Vorschau in symbol-vorschau.png")
+
+
+def ico_bauen(satz, ziel):
+    """Die Windows-Datei aus denselben Bildern.
+
+    ICO ist ein kurzer Kopf und dahinter die Bilder. Seit Vista duerfen
+    das PNGs sein - deshalb reicht Zusammenpacken, kein Umrechnen. Damit
+    tragen Mac und Windows dasselbe Symbol, aus derselben Quelle.
+    """
+    kanten = (16, 32, 48, 64, 128, 256)
+    bilder = []
+    for kante in kanten:
+        # 48 hat der Satz fuer macOS nicht - dann aus dem naechstgroesseren.
+        for name in ("icon_%dx%d.png" % (kante, kante),
+                     "icon_%dx%d@2x.png" % (kante // 2, kante // 2)):
+            weg = os.path.join(satz, name)
+            if os.path.exists(weg):
+                with open(weg, "rb") as f:
+                    bilder.append((kante, f.read()))
+                break
+
+    kopf = struct.pack("<HHH", 0, 1, len(bilder))
+    eintraege, daten, versatz = b"", b"", 6 + 16 * len(bilder)
+    for kante, inhalt in bilder:
+        eintraege += struct.pack("<BBBBHHII",
+                                 0 if kante >= 256 else kante,
+                                 0 if kante >= 256 else kante,
+                                 0, 0, 1, 32, len(inhalt), versatz)
+        daten += inhalt
+        versatz += len(inhalt)
+    with open(ziel, "wb") as f:
+        f.write(kopf + eintraege + daten)
 
 
 if __name__ == "__main__":

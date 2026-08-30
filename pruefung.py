@@ -23,6 +23,7 @@ import json
 import os
 import pathlib
 import queue
+import io
 import sys
 import tempfile
 import time
@@ -770,8 +771,16 @@ def wacht_lauf(drehbuch, stufe="mittel", je_minute=99, findet=True):
         stand["name"], hell = folge.pop(0)
         return [hell] * 576
 
+    # **Hinterher zurückgeben.** Diese Attrappen hingen bis 30.08.2026 für
+    # den Rest des Laufs im Modul – eine spätere Probe bekam dann die
+    # Attrappe statt der echten Funktion und fiel durch, obwohl der
+    # Quelltext in Ordnung war. Wer global ersetzt, räumt auch wieder auf.
+    echt = (livescan.bereich_aufnehmen, livescan.fingerabdruck)
     livescan.bereich_aufnehmen, livescan.fingerabdruck = abzug, finger
-    livescan.LiveScanner._wachen(w)
+    try:
+        livescan.LiveScanner._wachen(w)
+    finally:
+        livescan.bereich_aufnehmen, livescan.fingerabdruck = echt
     return raus
 
 
@@ -980,6 +989,66 @@ pruefe(_icns.exists() and _icns.stat().st_size > 1000,
 # py2app zieht tkinter nur mit, wenn es ausdrücklich dabeisteht.
 pruefe('"packages": ["tkinter"]' in _setup,
        "setup.py nimmt tkinter ausdrücklich mit")
+
+# ==================================================== Der Windows-Weg
+# Der Mac-Weg bleibt unangetastet; fuer Windows stehen eigene Zweige
+# daneben. Sie lassen sich hier pruefen, indem die Weiche umgelegt wird -
+# die Bildarbeit haengt nur an Pillow, nicht am Betriebssystem.
+abschnitt("11. Der Windows-Weg")
+
+pruefe(livescan.IST_WINDOWS == sys.platform.startswith("win"),
+       "die Weiche erkennt das System richtig")
+_ico = pathlib.Path(__file__).with_name("livescan.ico")
+pruefe(_ico.exists() and _ico.stat().st_size > 1000,
+       "das Windows-Symbol liegt bei")
+_scan_roh = pathlib.Path(livescan.__file__).read_text()
+pruefe("winsound" in _scan_roh, "der Ton hat einen Windows-Zweig")
+pruefe("System.Windows.Forms.Clipboard" in _scan_roh,
+       "die Zwischenablage auch")
+pruefe("ImageGrab" in _scan_roh, "und die Bildschirmaufnahme")
+
+try:
+    from PIL import Image as _PIL
+except ImportError:
+    _PIL = None
+
+if _PIL is None:
+    print("     (Pillow fehlt – die Bildproben des Windows-Wegs bleiben aus)")
+else:
+    _vorher = livescan.IST_WINDOWS
+    livescan.IST_WINDOWS = True
+    try:
+        _puffer = io.BytesIO()
+        _PIL.new("RGB", (300, 200), (200, 30, 30)).save(_puffer, format="JPEG")
+        _jpeg = _puffer.getvalue()
+        pruefe(livescan.als_png(_jpeg)[:4] == b"\x89PNG",
+               "JPEG wird zu PNG – Tk zeigt nichts anderes")
+
+        _puffer = io.BytesIO()
+        _PIL.new("RGB", (300, 200), (30, 200, 30)).save(_puffer, format="PNG")
+        _png = _puffer.getvalue()
+        _klein = livescan.auf_groesse(_png, 100)
+        with _PIL.open(io.BytesIO(_klein)) as _b:
+            pruefe(max(_b.size) == 100,
+                   "auf_groesse trifft die längste Kante genau")
+            pruefe(_b.size == (100, 66) or _b.size == (100, 67),
+                   "und behält das Seitenverhältnis")
+
+        _f = livescan.fingerabdruck(_png, 8)
+        pruefe(_f is not None and len(_f) == 64,
+               "der Fingerabdruck liefert 8×8 Helligkeitswerte")
+        pruefe(all(0 <= w <= 255 for w in _f),
+               "und die liegen im gültigen Bereich")
+        pruefe(livescan.abweichung(_f, _f) == 0,
+               "gleiches Bild -> keine Abweichung")
+
+        _puffer = io.BytesIO()
+        _PIL.new("RGB", (300, 200), (0, 0, 0)).save(_puffer, format="PNG")
+        _dunkel = livescan.fingerabdruck(_puffer.getvalue(), 8)
+        pruefe(livescan.abweichung(_f, _dunkel) > 10,
+               "anderes Bild -> deutliche Abweichung")
+    finally:
+        livescan.IST_WINDOWS = _vorher
 
 # ============================================================ Bilanz
 print("\n" + "─" * 58)

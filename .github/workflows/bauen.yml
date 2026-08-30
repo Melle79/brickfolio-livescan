@@ -92,3 +92,53 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           files: dist/Brickfolio-Live-Scanner-macOS-arm64.zip
+
+  windows:
+    # Fuer Windows-Rechner. Gebaut wird mit PyInstaller, weil py2app nur macOS
+    # kann. Unterschrieben wird hier **nicht**: Ein Windows-Zertifikat gibt
+    # es nicht, SmartScreen warnt darum beim ersten Start - einmal
+    # »Weitere Informationen« → »Trotzdem ausführen«.
+    runs-on: windows-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Baustube
+        # Pillow ersetzt, was auf dem Mac `sips` und `screencapture` tun.
+        run: python -m pip install --quiet pillow pyinstaller
+
+      - name: Prüfen
+        # Dieselben Proben wie auf dem Mac. Mit Pillow zur Hand laufen
+        # zusaetzlich die des Windows-Wegs mit.
+        run: python pruefung.py
+
+      - name: Bündeln
+        run: >
+          pyinstaller --noconfirm --clean --windowed
+          --name "Brickfolio Live-Scanner"
+          --icon livescan.ico
+          --add-data "README.md;."
+          livescan.py
+
+      - name: Beweisen, dass es startet
+        run: python pruefe_windows.py
+
+      - name: Einpacken
+        run: >
+          Compress-Archive -Path "dist/Brickfolio Live-Scanner/*"
+          -DestinationPath "Brickfolio-Live-Scanner-Windows-x64.zip"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Brickfolio-Live-Scanner-Windows-x64
+          path: Brickfolio-Live-Scanner-Windows-x64.zip
+
+      - name: Ans Release hängen
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: Brickfolio-Live-Scanner-Windows-x64.zip

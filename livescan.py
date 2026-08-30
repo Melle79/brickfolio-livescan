@@ -34,6 +34,7 @@ from __future__ import annotations
 
 import base64
 import hashlib
+import io
 import json
 import os
 import queue
@@ -69,6 +70,12 @@ from tkinter import ttk
 # Steht auch im Info.plist des Bündels. setup.py liest sie von hier,
 # damit sie nicht an zwei Stellen auseinanderläuft; pruefung.py wacht darüber.
 VERSION = "1.0.4"
+
+# Auf welchem System laufen wir? Der Mac-Weg bleibt unangetastet; fuer
+# Windows stehen daneben eigene Zweige. Alles andere (Linux) faellt auf den
+# Mac-Weg zurueck und scheitert dort hoerbar - das ist ehrlicher, als so zu
+# tun, als koennten wir es.
+IST_WINDOWS = sys.platform.startswith("win")
 
 EINSTELLUNGEN = os.path.expanduser("~/.brickfolio-livescan.json")
 
@@ -109,7 +116,10 @@ def lesen() -> dict:
 def schreiben(daten: dict) -> None:
     with open(EINSTELLUNGEN, "w") as f:
         json.dump(daten, f, indent=1)
-    os.chmod(EINSTELLUNGEN, stat.S_IRUSR | stat.S_IWUSR)
+    if not IST_WINDOWS:
+        # 0600 – nur fuer euch lesbar. Windows kennt diese Rechte nicht;
+        # dort schuetzt allein, dass die Datei im Benutzerprofil liegt.
+        os.chmod(EINSTELLUNGEN, stat.S_IRUSR | stat.S_IWUSR)
 
 
 # --------------------------------------------------------------- Instanz
@@ -400,7 +410,11 @@ WUNSCH_AN = "#e08a00"
 WUNSCH_ZEILE = "#ffeec2"        # blasser Grund in der Trefferliste
 WUNSCH_TAKTE = 8                # so oft wird umgeschaltet
 WUNSCH_TAKT = 260               # Millisekunden je Wechsel
-WUNSCH_TON = "/System/Library/Sounds/Hero.aiff"
+# Der Mac hat den Ton im System liegen. Windows hat kein Gegenstueck an
+# fester Stelle - dort nimmt `ton_spielen` den Systemklang, weil winsound
+# ihn ohne Datei spielen kann.
+WUNSCH_TON = ("" if IST_WINDOWS
+              else "/System/Library/Sounds/Hero.aiff")
 
 
 def _schon_da(info: dict) -> bool:
@@ -510,20 +524,32 @@ def _gewuenscht(info: dict) -> bool:
 
 
 def ton_spielen(datei: str = WUNSCH_TON) -> None:
-    """Kurz Bescheid geben – mit `afplay`, das in macOS steckt.
+    """Kurz Bescheid geben – auf dem Mac mit `afplay`, unter Windows mit
+    `winsound`, beides im System enthalten.
 
     Nicht `bell()`: Der Systemton ist bei vielen abgeschaltet oder so leise,
     dass er neben einem laufenden Stream untergeht. Und in einem eigenen
     Faden, denn die Oberfläche hat nicht zu warten, bis der Ton zu Ende ist.
     """
-    if not os.path.isfile(datei):
+    if not IST_WINDOWS and not os.path.isfile(datei):
         return
 
     def lauf():
         try:
-            subprocess.run(["afplay", datei], check=False, timeout=10,
-                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        except (subprocess.SubprocessError, OSError):
+            if IST_WINDOWS:
+                import winsound
+                if datei and os.path.isfile(datei):
+                    winsound.PlaySound(datei, winsound.SND_FILENAME
+                                       | winsound.SND_ASYNC)
+                else:
+                    # Ohne eigene Datei der Systemklang - besser als
+                    # Stille, und es muss nichts mitgeliefert werden.
+                    winsound.MessageBeep(winsound.MB_ICONASTERISK)
+            else:
+                subprocess.run(["afplay", datei], check=False, timeout=10,
+                               stdout=subprocess.DEVNULL,
+                               stderr=subprocess.DEVNULL)
+        except (subprocess.SubprocessError, OSError, RuntimeError, ImportError):
             pass
     threading.Thread(target=lauf, daemon=True).start()
 
@@ -652,17 +678,45 @@ def _meldung(fehler) -> str:
     return f"HTTP {fehler.code}"
 
 
+def _pillow():
+    """Pillow – aber nur unter Windows und nur beim ersten Bedarf.
+
+    Auf dem Mac erledigen `sips` und `screencapture` alles, was hier
+    gebraucht wird; das Werkzeug kommt dort ohne eine einzige
+    Fremdbibliothek aus, und dabei soll es bleiben. Windows bringt kein
+    Gegenstueck mit, deshalb dort Pillow.
+
+    Gibt None zurueck, wenn es fehlt - die Aufrufer kommen damit zurecht
+    und liefern das Bild lieber ungeaendert aus, als abzustuerzen.
+    """
+    try:
+        from PIL import Image
+        return Image
+    except ImportError:
+        return None
+
+
 def als_png(roh: bytes) -> bytes | None:
     """Beliebiges Bild in PNG wandeln – Tk zeigt nur PNG, GIF und PPM.
 
-    Der Katalog-Weiterleiter der Instanz liefert JPEG. Gewandelt wird mit
-    `sips`, das in macOS steckt: So bleibt dieses Werkzeug ohne
-    Bildbibliothek.
+    Der Katalog-Weiterleiter der Instanz liefert JPEG. Auf dem Mac wandelt
+    `sips`, das im System steckt; unter Windows Pillow.
     """
     if not roh:
         return None
     if roh[:4] == b"\x89PNG":
         return roh
+    if IST_WINDOWS:
+        Image = _pillow()
+        if Image is None:
+            return None
+        try:
+            with Image.open(io.BytesIO(roh)) as bild:
+                hinaus = io.BytesIO()
+                bild.convert("RGBA").save(hinaus, format="PNG")
+                return hinaus.getvalue()
+        except Exception:
+            return None
     quelle = os.path.join(tempfile.gettempdir(),
                           f"brickfolio-ref-{uuid.uuid4().hex}")
     ziel = quelle + ".png"
@@ -696,6 +750,24 @@ def auf_groesse(roh: bytes, kante: int) -> bytes | None:
     """
     if not roh:
         return None
+    if IST_WINDOWS:
+        Image = _pillow()
+        if Image is None:
+            return roh                     # dann eben ungeändert
+        try:
+            with Image.open(io.BytesIO(roh)) as bild:
+                bild = bild.convert("RGBA")
+                b, h = bild.size
+                if max(b, h) > kante:
+                    teiler = max(b, h) / float(kante)
+                    bild = bild.resize((max(1, int(b / teiler)),
+                                        max(1, int(h / teiler))),
+                                       Image.LANCZOS)
+                hinaus = io.BytesIO()
+                bild.save(hinaus, format="PNG")
+                return hinaus.getvalue()
+        except Exception:
+            return roh
     quelle = os.path.join(tempfile.gettempdir(),
                           f"brickfolio-skal-{uuid.uuid4().hex}.png")
     try:
@@ -771,6 +843,20 @@ def fingerabdruck(roh: bytes, kante: int = FINGER_KANTE) -> list | None:
     """
     if not roh:
         return None
+    if IST_WINDOWS:
+        Image = _pillow()
+        if Image is None:
+            return None
+        try:
+            with Image.open(io.BytesIO(roh)) as bild:
+                # Genau dieselbe Menge Zahlen wie auf dem Mac: ein Quadrat
+                # aus Helligkeitswerten. Verglichen wird immer nur mit einem
+                # Abzug derselben Herkunft, also muessen die beiden Wege
+                # nicht aufs Byte uebereinstimmen - nur jeder mit sich.
+                klein = bild.convert("L").resize((kante, kante))
+                return list(klein.getdata())
+        except Exception:
+            return None
     quelle = os.path.join(tempfile.gettempdir(),
                           f"brickfolio-wacht-{uuid.uuid4().hex}.png")
     ziel = quelle + ".bmp"
@@ -830,6 +916,22 @@ def in_zwischenablage(bild: bytes) -> bool:
     try:
         with open(pfad, "wb") as f:
             f.write(bild)
+        if IST_WINDOWS:
+            # Ueber Windows PowerShell 5.1 - die liegt auf jedem Windows und
+            # laeuft im STA-Modus, den die Zwischenablage verlangt. pwsh 7
+            # taete es nicht ohne Weiteres, und eine Fremdbibliothek nur
+            # hierfuer waere zu viel.
+            sicher = pfad.replace("'", "''")
+            fertig = subprocess.run(
+                ["powershell", "-NoProfile", "-STA", "-Command",
+                 "Add-Type -AssemblyName System.Windows.Forms,System.Drawing; "
+                 "$b=[System.Drawing.Image]::FromFile('%s'); "
+                 "[System.Windows.Forms.Clipboard]::SetImage($b); "
+                 "$b.Dispose()" % sicher],
+                check=False, timeout=25, stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+            return fertig.returncode == 0
         befehl = ('set the clipboard to (read (POSIX file "%s") '
                   'as «class PNGf»)' % pfad)
         fertig = subprocess.run(["osascript", "-e", befehl], check=False,
@@ -901,6 +1003,45 @@ def _multipart(felder: dict, grenze: str) -> bytes:
 
 # --------------------------------------------------------- Bildschirmfoto
 
+def schirmfoto(pfad: str) -> bool:
+    """Ein Abbild des Hauptbildschirms nach `pfad` legen.
+
+    Auf dem Mac `screencapture -D 1` – ohne `-D 1` legt es bei mehreren
+    Monitoren mehrere Dateien an, und keine heisst wie erwartet. Unter
+    Windows Pillow.
+
+    **Zur Bildschirmskalierung unter Windows:** Der Scanner meldet sich
+    absichtlich *nicht* als DPI-bewusst an. Dann sind Abbild und Tk-Punkte
+    in derselben Rechnung, und ein gezogener Rahmen trifft genau das, was
+    man gesehen hat. Der Preis ist ein etwas weicheres Bild bei 125 % oder
+    150 %. Andersherum – DPI-bewusst – waere es schaerfer, aber die
+    Koordinaten muessten stimmen, und das kann hier niemand nachmessen.
+    Wenn die Erkennung auf einem skalierten Bildschirm schwaechelt, ist das
+    die erste Stellschraube.
+
+    Beide liefern **Bildpunkte**, nicht Fensterpunkte: Auf Retina und auf
+    skalierten Windows-Bildschirmen ist das Abbild groesser als der
+    Bildschirm Punkte hat. Wer damit rechnet, muss den Faktor selbst
+    herausfinden – `bereich_waehlen` tut das.
+    """
+    try:
+        if IST_WINDOWS:
+            try:
+                from PIL import ImageGrab
+            except ImportError:
+                return False
+            bild = ImageGrab.grab()
+            bild.save(pfad, format="PNG")
+        else:
+            subprocess.run(["screencapture", "-x", "-t", "png", "-D", "1",
+                            pfad], check=False, timeout=60,
+                           stdout=subprocess.DEVNULL,
+                           stderr=subprocess.DEVNULL)
+        return os.path.isfile(pfad) and os.path.getsize(pfad) > 0
+    except (subprocess.SubprocessError, OSError, Exception):
+        return False
+
+
 def rahmen_ziehen() -> bytes | None:
     """Den Rahmen von macOS ziehen lassen – dieselbe Auswahl wie bei ⌘⇧4.
 
@@ -908,11 +1049,30 @@ def rahmen_ziehen() -> bytes | None:
     Maße mit, lässt sich mit der Leertaste verschieben und mit Esc abbrechen.
     Und sie kostet keine Zeile Code.
     """
+    if IST_WINDOWS:
+        # Gibt es dort nicht – `rahmen_senden` nimmt den anderen Weg und
+        # ruft das hier gar nicht erst auf. Lieber None als ein leeres Bild.
+        return None
     return _screencapture(["-i"])
 
 
 def bereich_aufnehmen(bereich: tuple) -> bytes | None:
     x, y, b, h = bereich
+    if IST_WINDOWS:
+        try:
+            from PIL import ImageGrab
+        except ImportError:
+            return None
+        try:
+            # `all_screens`, damit ein Bereich auf dem zweiten Monitor nicht
+            # ins Leere greift. Die Koordinaten kommen aus derselben Quelle
+            # wie das Abbild, passen also zusammen.
+            bild = ImageGrab.grab(bbox=(x, y, x + b, y + h), all_screens=True)
+            hinaus = io.BytesIO()
+            bild.save(hinaus, format="PNG")
+            return hinaus.getvalue()
+        except Exception:
+            return None
     return _screencapture(["-R", f"{x},{y},{b},{h}"])
 
 
@@ -953,12 +1113,7 @@ def bereich_waehlen(wurzel: tk.Tk) -> tuple | None:
     roh_pfad = os.path.join(tempfile.gettempdir(),
                             f"brickfolio-bereich-{uuid.uuid4().hex}.png")
     try:
-        # `-D 1`: nur der Hauptbildschirm. Ohne das legt screencapture bei
-        # mehreren Monitoren mehrere Dateien an, und keine heißt wie erwartet.
-        subprocess.run(["screencapture", "-x", "-t", "png", "-D", "1",
-                        roh_pfad], check=False, timeout=60,
-                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        if not os.path.isfile(roh_pfad) or os.path.getsize(roh_pfad) == 0:
+        if not schirmfoto(roh_pfad):
             return None
 
         fenster = tk.Toplevel(wurzel)
@@ -2176,6 +2331,24 @@ class LiveScanner:
 
     # ---------------------------------------------------------- Auslösen
     def rahmen_senden(self):
+        if IST_WINDOWS:
+            # Windows hat keine eingebaute Auswahl wie macOS' ⌘⇧4. Also
+            # derselbe Weg wie bei »Bereich merken«: ein Abbild des
+            # Bildschirms zeigen und darin den Rahmen ziehen – nur wird er
+            # hier nicht gemerkt, sondern gleich aufgenommen.
+            #
+            # **Im Hauptfaden**, nicht in `_ausloesen`s Arbeitsfaden: Tk
+            # gehört dem Hauptfaden, und `bereich_waehlen` baut ein Fenster.
+            self.wurzel.withdraw()
+            self.wurzel.update()
+            time.sleep(0.25)
+            gewaehlt = bereich_waehlen(self.wurzel)
+            self.wurzel.deiconify()
+            if not gewaehlt:
+                self.melden("Abgebrochen.")
+                return
+            self._ausloesen(lambda: bereich_aufnehmen(gewaehlt))
+            return
         self._ausloesen(rahmen_ziehen, versteckt=True)
 
     def bereich_senden(self):
@@ -3039,7 +3212,9 @@ def handbuch_zeigen():
     Repo etwas zeigt.
     """
     ort = handbuch_pfad()
-    if ort:
+    if ort and IST_WINDOWS:
+        os.startfile(ort)          # noqa: S606 – gibt es nur unter Windows
+    elif ort:
         subprocess.run(["open", ort], check=False)
     else:
         webbrowser.open("https://github.com/Melle79/brickfolio-livescan#readme")
