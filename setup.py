@@ -32,6 +32,16 @@ setup(
         # es ausdrücklich dabeisteht.
         "packages": ["tkinter"],
         "includes": ["queue", "json", "urllib.request", "ssl"],
+        # **Ballast, den py2app von allein einpackt.** setup_requires zieht
+        # setuptools in die Abhaengigkeitssuche, setuptools importiert
+        # test.support - und schon liegen die Testdaten der Standard-
+        # bibliothek (decimaltestdata, certdata, cjkencodings) im Buendel:
+        # allein 2,8 MB von 6,8 MB des Archivs. Der Scanner benutzt nichts
+        # davon; er kommt mit reiner Standardbibliothek aus.
+        "excludes": [
+            "test", "setuptools", "pkg_resources", "distutils",
+            "_distutils_hack", "packaging", "wheel", "pydoc_data",
+        ],
         # Der Scanner liegt über anderen Fenstern und hat kein Dock-Symbol
         # nötig? Doch – man will ihn wiederfinden. Also normale App.
         "plist": {

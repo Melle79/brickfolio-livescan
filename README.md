@@ -637,8 +637,14 @@ es muss nichts weiter installiert sein.
 
     gh release download --repo Melle79/brickfolio-livescan \
         --pattern '*.zip' --clobber --dir /tmp/bfls
+    ditto -x -k /tmp/bfls/*.zip /tmp/bfls/neu
     rm -rf "/Applications/Brickfolio Live-Scanner.app"
-    ditto -x -k /tmp/bfls/*.zip /Applications
+    mv "/tmp/bfls/neu/Brickfolio Live-Scanner.app" /Applications/
+
+**Die Reihenfolge ist Absicht.** Erst auspacken, dann die alte Fassung
+weg, dann hinüberschieben. Andersherum – löschen und danach auspacken –
+steht man ohne App da, wenn das Auspacken schiefgeht. Genau das ist am
+30.08.2026 passiert.
 
 Danach startet sie **ohne jede Nachfrage**. Der Grund ist unscheinbar,
 aber der ganze Unterschied: Das Quarantäne-Merkmal, an dem sich macOS
