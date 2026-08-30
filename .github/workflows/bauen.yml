@@ -1,0 +1,78 @@
+name: Bauen
+
+# Bei jedem Push prüfen. Bei einem Tag v1.2.3 zusätzlich die App bauen
+# und ans Release hängen.
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: write        # nötig, um das ZIP ans Release zu hängen
+
+jobs:
+  bauen:
+    # macos-14 und neuer sind Apple Silicon - genau die Bauart, die
+    # gebraucht wird. Ein Intel-Build waere ein zweiter Lauf auf macos-13.
+    runs-on: macos-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Python mit brauchbarem Tk
+        # Das Python der Runner bringt nicht zuverlaessig ein Tk mit, das
+        # mehr als ein weisses Fenster zeichnet. Homebrew tut es.
+        run: |
+          brew install python@3.13 python-tk@3.13
+          echo "PY=/opt/homebrew/opt/python@3.13/bin/python3.13" >> "$GITHUB_ENV"
+
+      - name: Baustube
+        run: |
+          "$PY" -m venv .venv-bau
+          .venv-bau/bin/python -m pip install --quiet --upgrade pip py2app
+          .venv-bau/bin/python -c "import tkinter; print('Tk', tkinter.TkVersion)"
+
+      - name: Prüfen
+        # Die Proben bauen echte Fenster. Die Runner haben eine
+        # Fenstersitzung - faellt das je aus, bricht es hier auf, nicht
+        # erst beim Anwender.
+        run: .venv-bau/bin/python pruefung.py
+
+      - name: Bündeln
+        run: .venv-bau/bin/python setup.py py2app
+
+      - name: Beweisen, dass das Bündel läuft
+        # Wichtiger als "Done!": Das *gebuendelte* Python muss die Proben
+        # bestehen. Sonst fehlt drinnen etwas, was draussen noch da war.
+        run: |
+          BP="dist/Brickfolio Live-Scanner.app/Contents/MacOS/python"
+          "$BP" -c "import tkinter, sys; print(sys.version, 'Tk', tkinter.TkVersion)"
+          "$BP" pruefung.py
+
+      - name: Unterschreiben (ad hoc)
+        # Ohne Signatur laesst macOS auf arm64 gar nichts starten. Ad hoc
+        # reicht dafuer; die Gatekeeper-Warnung bleibt trotzdem, dagegen
+        # hilft nur ein Apple-Entwicklerkonto.
+        run: codesign --force --deep --sign - "dist/Brickfolio Live-Scanner.app"
+
+      - name: Einpacken
+        # ditto statt zip: nur ditto erhaelt Symlinks und Rechte im
+        # Buendel. Ein normales zip macht die App unstartbar.
+        run: |
+          cd dist
+          ditto -c -k --keepParent --sequesterRsrc \
+            "Brickfolio Live-Scanner.app" "Brickfolio-Live-Scanner-macOS-arm64.zip"
+          ls -lh *.zip
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Brickfolio-Live-Scanner-macOS-arm64
+          path: dist/Brickfolio-Live-Scanner-macOS-arm64.zip
+
+      - name: Ans Release hängen
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/Brickfolio-Live-Scanner-macOS-arm64.zip

@@ -1,0 +1,3006 @@
+#!/usr/bin/env python3
+"""Brickfolio Live-Scanner – Ausschnitt vom Bildschirm an die App schicken.
+
+Gedacht für Auktions-Streams: Der Verkäufer hält eine Figur hoch, ihr zieht
+einen Rahmen darum, und der Treffer steht mit Nummer, Ø-Preisen und
+„habt ihr schon" da – ohne Bildschirmfoto, ohne Datei, ohne Ziehen und
+Ablegen.
+
+**Eigenständig.** Dieses Programm gehört nicht zur App und wird auch nicht
+mit ihr ausgeliefert. Es benutzt nur ihre Schnittstelle, genauso wie es der
+Browser tut: anmelden, `/api/scan`, und auf Knopfdruck die üblichen Wege in
+Sammlung, Wunschliste oder auf eine Einkaufsliste.
+
+**Ein Auslöser = eine Anfrage.** Die Erkennung dahinter (Brickognize) wird
+kostenlos bereitgestellt, und ein Videostream hätte 25 Bilder je Sekunde, von
+denen 24 dasselbe zeigen. Deshalb wird nie ein Strom von Bildern verschickt.
+
+Auf Wunsch löst der Scanner selbst aus, wenn im gemerkten Bereich eine neue
+Figur erscheint (⏱). Auch dann bleibt es bei einer Anfrage je Figur: Verglichen
+wird **auf diesem Rechner**, und geschickt wird erst, wenn sich das Bild
+geändert hat *und* danach still steht. Höchstens ein Dutzend Anfragen je
+Minute, mit Mindestabstand dazwischen. Von selbst **gebucht** wird nie – in
+Sammlung, Wunschliste oder auf eine Liste kommt nur, was ihr anklickt.
+
+**Ohne Fremdbibliotheken.** Läuft mit dem Python, das in macOS steckt:
+
+    python3 livescan.py
+
+Beim ersten Bildschirmfoto fragt macOS nach der Berechtigung
+**Bildschirmaufnahme** – für das Programm, aus dem ihr das hier startet
+(meist Terminal). Ohne sie kommt ein schwarzes Bild.
+"""
+from __future__ import annotations
+
+import base64
+import hashlib
+import json
+import os
+import queue
+import stat
+import subprocess
+import sys
+import tempfile
+import threading
+import time
+import tkinter as tk
+import urllib.error
+import urllib.parse
+import urllib.request
+import uuid
+from tkinter import ttk
+
+# Steht auch im Info.plist des Bündels. setup.py liest sie von hier,
+# damit sie nicht an zwei Stellen auseinanderläuft; pruefung.py wacht darüber.
+VERSION = "1.0.0"
+
+EINSTELLUNGEN = os.path.expanduser("~/.brickfolio-livescan.json")
+
+# Der Verlauf überlebt jetzt den Neustart – aber nur die Zeilen, **nie die
+# Aufnahmen**. Eigene Datei, damit die Zugangsdaten schlank bleiben und man
+# den Verlauf wegwerfen kann, ohne sich neu anzumelden.
+VERLAUF_DATEI = os.path.expanduser("~/.brickfolio-livescan-verlauf.json")
+
+# Laengste Kante der beiden Daumennaegel. Das Fenster ist darauf
+# abgestimmt - wer sie aendert, sollte die Fensterbreite mitziehen.
+BILDKANTE = 250
+
+# Die Daumennägel zum Aussuchen, wenn eine Figur aus mehreren Ansichten kam.
+# Ein farbiger Rand allein reicht nicht: Bei sechs Bildern nebeneinander sieht
+# man ihn im Augenwinkel nicht mehr. Das gewählte trägt deshalb zusätzlich ein
+# Häkchen in der Ecke, und die ungewählten treten zurück.
+MINI_KANTE = 54
+MINI_RAND = 4
+MINI_AN = "#1a7f37"        # Rand und Häkchen: dieses Bild wird angehängt
+MINI_AUS = "#e2e2e2"
+# So viele passen nebeneinander, ohne das Fenster zu sprengen – und so viele
+# werden auch nur aufgehoben. Beides muss dieselbe Zahl sein: Sonst kann die
+# Vorauswahl auf eine Aufnahme fallen, die gar nicht angezeigt wird, und man
+# hängt ein Bild an, das man nie gesehen hat.
+MINI_HOECHSTENS = 6
+
+
+# ------------------------------------------------------------ Einstellungen
+
+def lesen() -> dict:
+    try:
+        with open(EINSTELLUNGEN) as f:
+            return json.load(f)
+    except (OSError, ValueError):
+        return {}
+
+
+def schreiben(daten: dict) -> None:
+    with open(EINSTELLUNGEN, "w") as f:
+        json.dump(daten, f, indent=1)
+    os.chmod(EINSTELLUNGEN, stat.S_IRUSR | stat.S_IWUSR)
+
+
+# --------------------------------------------------------------- Instanz
+
+class Fehler(RuntimeError):
+    pass
+
+
+class Instanz:
+    """Die Verbindung zu einer Brickfolio-Instanz – über deren Schnittstelle,
+    ohne irgendetwas über ihr Inneres anzunehmen."""
+
+    def __init__(self, adresse: str = "", token: str = ""):
+        self.adresse = adresse.rstrip("/")
+        self.token = token
+
+    # ------------------------------------------------------- Grundlagen
+    def _anfrage(self, weg: str, daten=None, methode="GET", felder=None):
+        url = self.adresse + weg
+        kopf = {"Accept": "application/json"}
+        if self.token:
+            kopf["Authorization"] = "Bearer " + self.token
+        koerper = None
+        if felder is not None:
+            grenze = "----brickfolio" + uuid.uuid4().hex
+            koerper = _multipart(felder, grenze)
+            kopf["Content-Type"] = "multipart/form-data; boundary=" + grenze
+            methode = "POST"
+        elif daten is not None:
+            koerper = json.dumps(daten).encode()
+            kopf["Content-Type"] = "application/json"
+            methode = "POST"
+        antrag = urllib.request.Request(url, data=koerper, headers=kopf,
+                                        method=methode)
+        try:
+            with urllib.request.urlopen(antrag, timeout=90) as antwort:
+                roh = antwort.read()
+        except urllib.error.HTTPError as e:
+            raise Fehler(_meldung(e)) from None
+        except urllib.error.URLError as e:
+            raise Fehler(f"Instanz nicht erreichbar ({e.reason})") from None
+        try:
+            return json.loads(roh)
+        except ValueError:
+            raise Fehler("Unerwartete Antwort der Instanz") from None
+
+    # ----------------------------------------------------------- Wege
+    def anmelden(self, benutzer: str, passwort: str) -> None:
+        antwort = self._anfrage("/api/login",
+                                {"username": benutzer, "password": passwort})
+        self.token = antwort.get("token") or ""
+        if not self.token:
+            raise Fehler("Dieses Konto verlangt einen zweiten Faktor – "
+                         "dafür ist dieses Werkzeug nicht gebaut.")
+
+    def erkennen(self, bild: bytes) -> dict:
+        return self._anfrage("/api/scan", felder={
+            "file": ("stream.png", "image/png", bild)})
+
+    def infos(self, artikel: list, bei_bricklink: bool = False) -> dict:
+        """Jahr, Ø-Preise und „wie oft habt ihr das schon".
+
+        Zwei Stufen, genau wie die App sie nimmt: Ohne `detail` kommt nur,
+        was schon in eurer Datenbank steht – sofort da, aber leer bei einer
+        Figur, die ihr noch nie hattet. Mit `detail=1` fragt die Instanz
+        **BrickLink**. Das dauert einen Moment, liefert aber auch für
+        Unbekanntes einen Preis.
+        """
+        weg = "/api/suggest_info?detail=1" if bei_bricklink \
+            else "/api/suggest_info"
+        try:
+            return self._anfrage(weg, {"items": artikel})
+        except Fehler:
+            return {}
+
+    def sets_der_figur(self, item_id: str) -> list:
+        """In welchen Sets kam diese Figur heraus?
+
+        `suggest_info?detail=1` liefert das zwar auch als `all_sets` – aber
+        nur für Artikel, denen Jahr **und** Preis fehlen. Bei einer Figur,
+        die ihr längst habt, kommt dort nie etwas an; genau die schaut man
+        beim Mitbieten aber am häufigsten an. `/api/fig_sets` beantwortet
+        dieselbe Frage direkt und liegt auf der Instanz 30 Tage im Speicher.
+        """
+        try:
+            return self._anfrage(f"/api/fig_sets/{item_id}").get("sets", [])
+        except Fehler:
+            return []
+
+    def listen(self) -> list:
+        try:
+            alle = self._anfrage("/api/lists").get("lists", [])
+        except Fehler:
+            return []
+        return [l for l in alle if not l.get("archived")]
+
+    def nummer_suchen(self, nummer: str) -> list:
+        """Alle Artikel zu einer Katalognummer – Figur, Set **und** Teil.
+
+        Für den Fall, dass die Erkennung nichts hergibt: schlechtes Licht,
+        die Figur zu weit weg, der Verkäufer zu schnell. Die Nummer steht
+        oft im Bild oder wird angesagt, und dann ist Tippen schneller als
+        ein zweiter Versuch.
+
+        Geraten wird dabei **nicht**. `3001` ist bei BrickLink sowohl das
+        Set „Propeller Buggy" als auch der Stein 2 × 4 – wer hier die eine
+        Art auswählt, legt bei jeder zweiten Nummer die falsche an. Also
+        alle drei fragen und die Treffer zur Auswahl stellen, genauso wie
+        die Erkennung ihre Varianten anbietet. Die Instanz antwortet aus
+        ihrem Zwischenspeicher; drei Fragen kosten kaum mehr als eine.
+        """
+        nummer = (nummer or "").strip()
+        if not nummer:
+            return []
+        gefunden = []
+        for art in ("minifig", "set", "part"):
+            try:
+                d = self._anfrage(
+                    f"/api/lookup/{art}/{urllib.parse.quote(nummer)}")
+            except Fehler:
+                continue
+            if d.get("item_id"):
+                gefunden.append({"item_id": d["item_id"], "item_type": art,
+                                 "name": d.get("name") or d["item_id"],
+                                 "img_url": d.get("img_url") or "",
+                                 "bricklink_url": d.get("bricklink_url") or "",
+                                 "score": 100})
+        return gefunden
+
+    def liste_anlegen(self, name: str) -> int:
+        """Neue Einkaufsliste – und ihre Nummer zurück.
+
+        Bis hierher musste man dafür in die App wechseln. Mitten in einem
+        Stream ist das der Moment, in dem der nächste Artikel hochgehalten
+        wird: Man kauft bei jemand Neuem und hat keine Liste dafür.
+        """
+        d = self._anfrage("/api/lists", {"name": name})
+        return d.get("id")
+
+    # Die drei Wege, die auch die Trefferkarte in der App anbietet –
+    # samt Zustand und Preis, denn ohne die ist ein Flohmarkt-Eintrag
+    # nur die halbe Miete.
+    def in_sammlung(self, t: dict, zustand: str = "used",
+                    preis: float | None = None) -> str:
+        koerper = {**_gemeinsam(t), "condition": zustand}
+        if preis is not None:
+            koerper["paid_price"] = preis
+        d = self._anfrage("/api/collection", koerper)
+        return "Menge erhöht" if d.get("merged") else "in der Sammlung"
+
+    def auf_wunschliste(self, t: dict) -> str:
+        d = self._anfrage("/api/wanted", _gemeinsam(t))
+        return "stand schon drauf" if d.get("exists") else "auf der Wunschliste"
+
+    def auf_liste(self, liste_id: int, t: dict, zustand: str = "used",
+                  preis: float | None = None) -> str:
+        koerper = {**_gemeinsam(t), "condition": zustand}
+        if preis is not None:
+            koerper["paid_price"] = preis
+        d = self._anfrage(f"/api/lists/{liste_id}/items", koerper)
+        return "Menge erhöht" if d.get("merged") else "auf der Liste"
+
+    def katalogbild(self, adresse: str) -> bytes | None:
+        """Das Referenzbild holen – über den Weiterleiter der Instanz.
+
+        Nicht direkt von BrickLink: Die Instanz hat es ohnehin schon im
+        Speicher, und so geht von hier aus nichts nach außen. Ein Login
+        braucht der Weg nicht, ein `<img>` trägt ja auch keinen Token.
+        """
+        if not adresse:
+            return None
+        if adresse.startswith("//"):
+            adresse = "https:" + adresse
+        weg = (self.adresse + "/catalog?u="
+               + urllib.parse.quote(adresse, safe="")
+               if adresse.startswith(("http://", "https://"))
+               else self.adresse + adresse)
+        try:
+            with urllib.request.urlopen(weg, timeout=30) as antwort:
+                return antwort.read()
+        except (urllib.error.URLError, OSError):
+            return None
+
+    def foto_anhaengen(self, t: dict, bild: bytes) -> None:
+        """Den aufgenommenen Ausschnitt als eigenes Foto an den Artikel
+        hängen – **zusätzlich** zum Katalogbild, wie in der App.
+
+        Zwei Schritte, weil die App es so anbietet: erst die Datei ablegen,
+        dann den Verweis an den Artikel heften.
+        """
+        adresse = self._anfrage("/api/upload_image", felder={
+            "file": ("livescan.png", "image/png", bild)}).get("url")
+        if not adresse:
+            raise Fehler("Bild konnte nicht abgelegt werden")
+        self._anfrage("/api/item_photos", {
+            "item_type": t.get("item_type") or "minifig",
+            "item_id": t["item_id"], "url": adresse})
+
+
+def _gemeinsam(t: dict) -> dict:
+    return {"item_id": t["item_id"],
+            "item_type": t.get("item_type") or "minifig",
+            "name": t.get("name") or t["item_id"],
+            "img_url": t.get("img_url") or "",
+            "bricklink_url": t.get("bricklink_url") or ""}
+
+
+def _woanders(info: dict) -> str:
+    """Wo taucht die Figur außerhalb der Sammlung schon auf?
+
+    Die Sammlung ist nur eine von mehreren Antworten auf „habe ich das
+    schon?". Wer in einem Live-Stream mitbietet, will genauso wissen, ob die
+    Figur längst auf der Wunschliste steht, auf einer Einkaufsliste liegt
+    oder zu einem Set gehört, das zu Hause unvollständig herumsteht – sonst
+    kauft man zum zweiten Mal.
+
+    All das liefert `/api/suggest_info` von sich aus mit; angezeigt wurde
+    bisher nur `owned`. Hier wird nichts Neues erfragt, nur Vorhandenes
+    hingeschrieben.
+    """
+    teile = []
+    if info.get("wanted"):
+        teile.append("☆ auf der Wunschliste")
+    # **Die Einkaufslisten stehen seit dem 30.08.2026 eine Zeile höher.**
+    # Dort beantworten sie „habe ich das?", und zweimal dasselbe zu sagen
+    # macht die Zeile nur länger.
+    eigene = _eigene_sets(info)
+    for nummer, name, anzahl, zustand in eigene[:EIGENE_SETS]:
+        # **Versiegelt oder offen** – das ist beim Mitbieten der ganze
+        # Unterschied. Im neuen Set steckt die Figur noch, im gebrauchten
+        # stünde sie längst einzeln in der Sammlung.
+        teile.append("🧩 steckt in eurem {}Set {} ({}){}".format(
+            "ungeöffneten " if zustand == "new" else "",
+            nummer, _kurz(name, 40),
+            "" if anzahl <= 1 else " ×{}".format(anzahl)))
+    if len(eigene) > EIGENE_SETS:
+        teile.append("und {} weiteren".format(len(eigene) - EIGENE_SETS))
+    return "   ".join(teile)
+
+
+# Wie viel in die beiden Zeilen darf. Der Umbruch richtet sich nach der
+# Fensterbreite, es geht also nichts verloren – aber eine Figur aus dreißig
+# Sets soll die Karte trotzdem nicht zur Tapete machen.
+EIGENE_SETS = 4
+KATALOG_SETS = 8
+
+# Wie viele Zeilen der Verlauf hält – und wie viele davon ihre Aufnahme
+# behalten. Beides ist verschieden: Eine Zeile kostet ein paar Byte, ein
+# Bildschirmausschnitt schnell ein halbes Megabyte. 200 Aufnahmen im Speicher
+# zu halten, nur damit die dreißigste noch anklickbar ist, wäre schlechter
+# Tausch – die Zeile bleibt, das Bild geht.
+VERLAUF_ZEILEN = 200
+VERLAUF_BILDER = 30
+# Und so viele überleben das Schließen. Weniger als im Betrieb, mit Absicht:
+# Beim nächsten Start will man sehen, womit man aufgehört hat, nicht den
+# ganzen Abend noch einmal. Die Aufnahmen sind ohnehin nicht dabei.
+VERLAUF_MERKEN = 20
+
+# Wie lange nach einem Scan ein weiterer noch als **andere Ansicht derselben
+# Figur** gilt. Der Verkäufer dreht sie, zeigt die Rückseite, hält sie schräg –
+# und die Erkennung liefert jedes Mal etwas anderes. Solange sich die
+# Vorschläge überschneiden und es schnell hintereinander geht, gehört das
+# zusammen.
+#
+# Großzügig bemessen, und für den Wächter genauso wie für die eigene Hand.
+# Mit 25 Sekunden zerfiel eine Figur in mehrere Zeilen: Von Hand dauert
+# Rahmen ziehen länger, und der Wächter macht nach vier Ansichten von sich
+# aus Pause, bis sich etwas Größeres tut – bis dahin ist die Frist um.
+#
+# Die Zeit ist ohnehin nur die zweite Bedingung. Die erste ist, dass sich die
+# Vorschläge überschneiden **und** die Figur noch obenauf im Verlauf liegt:
+# Sobald etwas anderes gescannt oder gebucht wurde, ist ohnehin Schluss.
+ANSICHT_FENSTER = 180.0
+
+# Der Rahmen um die beiden Bilder. Grün heißt „hast du schon irgendwo" –
+# im Set, das bei dir steht, oder auf einer offenen Einkaufsliste. Aus
+# bleibt er sonst; die Fensterfarbe hängt am Erscheinungsbild, deshalb wird
+# sie beim Start abgefragt statt hier festgeschrieben.
+RAHMEN_DICK = 6
+RAHMEN_AN = "#1a7f37"
+
+# Und das Gegenstück: Die Figur steht auf der **Wunschliste**. Grün heißt
+# „hast du schon, lass es" – ein Wunsch heißt das genaue Gegenteil, und
+# deshalb darf er nicht dieselbe Farbe tragen. Er bekommt eine eigene, und
+# er blinkt: Grün darf man übersehen, einen Wunsch nicht. Der ist der Grund,
+# aus dem man überhaupt zuschaut.
+WUNSCH_AN = "#e08a00"
+WUNSCH_ZEILE = "#ffeec2"        # blasser Grund in der Trefferliste
+WUNSCH_TAKTE = 8                # so oft wird umgeschaltet
+WUNSCH_TAKT = 260               # Millisekunden je Wechsel
+WUNSCH_TON = "/System/Library/Sounds/Hero.aiff"
+
+
+def _schon_da(info: dict) -> bool:
+    """Habt ihr die Figur in irgendeiner Form schon?
+
+    Zwei Gründe, im Stream **nicht** mitzubieten: Sie steht in der Sammlung,
+    oder sie liegt auf einer offenen Einkaufsliste. Beide machen den Rahmen
+    grün – die Farbe heißt schlicht „hast du schon".
+
+    **Ein gebrauchtes Set zählt seit dem 30.08.2026 nicht mehr mit.** der Anwender
+    trägt zu jedem Set, das er *mit* Figuren kauft, die Figuren einzeln in
+    die Sammlung ein. Steht eine Figur also nicht in der Sammlung, hat er
+    sie auch nicht – viele Sets kommen ohne Figuren herein. Der grüne
+    Rahmen hieß dann „hast du schon", während die Zeile darunter „noch
+    nicht in eurer Sammlung" sagte, und von beiden hatte nur die Zeile
+    recht.
+
+    **Ein neues Set dagegen zählt sehr wohl**: Es ist versiegelt, die
+    Figuren stecken noch darin. Genau deshalb liefert die App seit 2.76.0
+    den Zustand des Sets mit.
+
+    Dass die Figur zu einem gebrauchten Set gehört, steht weiterhin
+    darunter – als Hinweis, nicht als Kaufverbot.
+
+    Die Wunschliste zählt ebenfalls **nicht** mit: Ein Wunsch ist ein Grund
+    zu kaufen, kein Grund es zu lassen. Wäre der Rahmen dort auch grün,
+    hieße er zweierlei und damit nichts.
+    """
+    return (bool(info.get("owned"))
+            or bool(info.get("on_lists"))
+            or bool(_versiegelte_sets(info)))
+
+
+def _versiegelte_sets(info: dict) -> list:
+    """Eigene Sets, die **neu** sind – dort steckt die Figur noch drin."""
+    return [s for s in _eigene_sets(info) if s[3] == "new"]
+
+
+def _besitz_zeile(info: dict) -> dict:
+    """Die eine Zeile, die „habe ich das?" beantwortet.
+
+    Drei Fälle, in dieser Reihenfolge:
+
+    - **In der Sammlung.** Die klare Antwort.
+    - **Nicht in der Sammlung, aber auf einer Einkaufsliste.** Vorher stand
+      hier „— noch nicht in eurer Sammlung", während der Rahmen grün
+      leuchtete – zwei Aussagen, die sich widersprachen. Jetzt steht dort,
+      **auf welcher Liste** sie liegt; das ist die Antwort, die im Stream
+      zählt.
+    - **Weder noch.** Dann darf es auch so dastehen.
+
+    Ein eigenes Set kommt hier nicht vor. Es steht in der Zeile darunter,
+    als Hinweis – die Figuren zu einem Set trägt der Anwender einzeln ein, ein Set
+    ohne Figureneintrag heißt also: Figur nicht da.
+    """
+    habe = info.get("owned") or 0
+    if habe:
+        return {"text": "✔ {}× in eurer Sammlung".format(habe),
+                "foreground": "#1a7f37"}
+    listen = info.get("on_lists") or []
+    if len(listen) == 1:
+        return {"text": "🛒 steht auf »{}«".format(_kurz(listen[0], 46)),
+                "foreground": "#1a7f37"}
+    if listen:
+        return {"text": "🛒 steht auf {} Einkaufslisten: {}".format(
+                    len(listen), _kurz(", ".join(listen), 46)),
+                "foreground": "#1a7f37"}
+    versiegelt = _versiegelte_sets(info)
+    if versiegelt:
+        return {"text": "📦 steckt im ungeöffneten Set {}".format(
+                    ", ".join(s[0] for s in versiegelt[:2])),
+                "foreground": "#1a7f37"}
+    return {"text": "— noch nicht in eurer Sammlung",
+            "foreground": "#8a6d00"}
+
+
+def _schon_da_marke(info: dict) -> str:
+    """**Warum** die Zeile grün ist – ein Zeichen je Grund.
+
+    Grün heißt „hast du schon", und das hat drei mögliche Gründe. Ohne
+    Unterscheidung stand am 30.08.2026 eine grüne Zeile über der
+    Erklärung „— noch nicht in eurer Sammlung", und das las sich wie ein
+    Widerspruch: Die Figur steckte in einem eigenen Set und lag auf einer
+    Liste, war aber nicht als eigener Eintrag erfasst.
+
+    Besitz schlägt Liste schlägt versiegeltes Set. Ein **gebrauchtes**
+    Set steht hier nicht: Es macht die Zeile seit dem 30.08.2026 auch
+    nicht mehr grün, weil die Figuren daraus einzeln erfasst wären.
+    """
+    if info.get("owned"):
+        return "✔"
+    if info.get("on_lists"):
+        return "🛒"
+    if _versiegelte_sets(info):
+        return "📦"
+    return " "
+
+
+def _gewuenscht(info: dict) -> bool:
+    """Steht die Figur auf der Wunschliste?
+
+    Bewusst getrennt von `_schon_da`: Die beiden beantworten entgegengesetzte
+    Fragen. „Habt ihr schon" ist ein Grund, die Hand unten zu lassen; „steht
+    auf der Wunschliste" ist der Grund, aus dem ihr überhaupt zuschaut.
+    """
+    return bool(info.get("wanted"))
+
+
+def ton_spielen(datei: str = WUNSCH_TON) -> None:
+    """Kurz Bescheid geben – mit `afplay`, das in macOS steckt.
+
+    Nicht `bell()`: Der Systemton ist bei vielen abgeschaltet oder so leise,
+    dass er neben einem laufenden Stream untergeht. Und in einem eigenen
+    Faden, denn die Oberfläche hat nicht zu warten, bis der Ton zu Ende ist.
+    """
+    if not os.path.isfile(datei):
+        return
+
+    def lauf():
+        try:
+            subprocess.run(["afplay", datei], check=False, timeout=10,
+                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        except (subprocess.SubprocessError, OSError):
+            pass
+    threading.Thread(target=lauf, daemon=True).start()
+
+
+def _kurz(text: str, laenge: int) -> str:
+    """Abschneiden mit Auslassungszeichen – sonst bricht ein Setname mitten
+    im Wort ab und sieht aus wie ein Fehler."""
+    text = (text or "").strip()
+    return text if len(text) <= laenge else text[:laenge - 1].rstrip() + "…"
+
+
+def _eigene_sets(info: dict) -> list:
+    """Sets aus **eurer** Sammlung, in denen diese Figur steckt.
+
+    `in_sets` kommt als "nummer|name|anzahl|zustand;;…". Das vierte Feld
+    gibt es seit App-Fassung 2.76.0; fehlt es, gilt „gebraucht" – das ist
+    die vorsichtigere Annahme, denn nur ein **neues** Set zählt als
+    „Figur ist drin".
+    """
+    raus = []
+    for stueck in (info.get("in_sets") or "").split(";;"):
+        felder = stueck.split("|")
+        if len(felder) < 3:
+            continue
+        try:
+            anzahl = int(felder[2])
+        except ValueError:
+            anzahl = 1
+        zustand = felder[3] if len(felder) > 3 else "used"
+        raus.append((felder[0], felder[1], anzahl, zustand))
+    return raus
+
+
+def _alle_sets(info: dict, hoechstens: int = 0) -> str:
+    """In welchen Sets kam die Figur überhaupt heraus?
+
+    Nicht dasselbe wie `in_sets`: Das sind die Sets, die **ihr** habt; dies
+    hier ist der Katalog. Beim Mitbieten ist beides eine eigene Frage – „habe
+    ich das Set schon" und „woher stammt die Figur eigentlich".
+
+    Kommt erst mit der zweiten Antwort (`?detail=1`), zusammen mit dem Preis.
+    """
+    sets = info.get("all_sets") or []
+    if not sets:
+        return ""
+    hoechstens = hoechstens or KATALOG_SETS
+    gezeigt = ["{} {}".format(s.get("no", ""), _kurz(s.get("name"), 34))
+               for s in sets[:hoechstens]]
+    rest = len(sets) - len(gezeigt)
+    if rest > 0:
+        gezeigt.append("+{} weitere".format(rest))
+    return "📦 aus {} Set{}: {}".format(
+        len(sets), "" if len(sets) == 1 else "s", ",  ".join(gezeigt))
+
+
+def ansicht_dazulegen(eintrag: dict, bild: bytes) -> None:
+    """Eine weitere Aufnahme zum Stand legen – höchstens `MINI_HOECHSTENS`.
+
+    Ist der Platz voll, fliegt die **älteste nicht ausgesuchte** heraus. Was
+    der Anwender angehakt hat, bleibt: Er hat es sich ja angesehen. Die
+    Nummern der Auswahl rutschen dabei mit, sonst zeigte sie hinterher auf
+    das falsche Bild.
+    """
+    bilder = eintrag.setdefault("bilder", [])
+    gewaehlt = eintrag.setdefault("bilder_an", set())
+    bilder.append(bild)
+    if len(bilder) <= MINI_HOECHSTENS:
+        return
+    weg = next((i for i in range(len(bilder) - 1) if i not in gewaehlt), 0)
+    del bilder[weg]
+    eintrag["bilder_an"] = {i - 1 if i > weg else i
+                            for i in gewaehlt if i != weg}
+
+
+def _ansichten_vereinen(bisher: list, neu: list):
+    """Zwei Trefferlisten derselben Figur zu einer machen.
+
+    Auf einer Drehscheibe sieht die Erkennung dieselbe Figur drei- oder
+    viermal aus verschiedenen Winkeln und antwortet jedes Mal etwas anders.
+    Das ist kein Ärgernis, sondern die beste Auskunft, die man kriegen kann:
+    Eine Figur, die aus zwei Winkeln mit 62 % und 58 % kommt, ist mit viel
+    höherer Wahrscheinlichkeit die richtige als eine, die einmal mit 83 %
+    aufblitzt und danach nie wieder.
+
+    Deshalb: nichts wegwerfen, sondern zählen. Von der Trefferquote bleibt
+    die beste stehen, die Zahl der Ansichten kommt dazu, und sortiert wird
+    nach Bestätigungen zuerst. Zurück kommt die vereinte Liste und die Menge
+    der Nummern, deren Quote aus der **neuen** Ansicht stammt.
+    """
+    nach_nummer = {t["item_id"]: t for t in bisher}
+    verbessert = set()
+    for t in neu:
+        alt = nach_nummer.get(t["item_id"])
+        if alt is None:
+            t["_ansichten"] = 1
+            bisher.append(t)
+            nach_nummer[t["item_id"]] = t
+            verbessert.add(t["item_id"])
+            continue
+        alt["_ansichten"] = alt.get("_ansichten", 1) + 1
+        if (t.get("score") or 0) > (alt.get("score") or 0):
+            alt["score"] = t["score"]
+            verbessert.add(t["item_id"])
+        # Was die Instanz frisch mitgeschickt hat, gilt – aber nichts
+        # Leeres über etwas Gefülltes.
+        for schluessel, wert in (t.get("_info") or {}).items():
+            if wert is not None:
+                alt.setdefault("_info", {})[schluessel] = wert
+    # Mehrfach Bestätigtes nach oben; von Hand Eingetragenes ganz nach oben,
+    # denn dort hat niemand geraten.
+    bisher.sort(key=lambda t: (not t.get("_getippt"),
+                               -t.get("_ansichten", 1),
+                               -(t.get("score") or 0)))
+    return bisher, verbessert
+
+
+def _meldung(fehler) -> str:
+    """Die App antwortet mit brauchbaren deutschen Sätzen – die zeigen wir,
+    nicht die nackte Statusnummer."""
+    try:
+        d = json.loads(fehler.read())
+        if isinstance(d, dict) and d.get("detail"):
+            return str(d["detail"])
+    except Exception:
+        pass
+    return f"HTTP {fehler.code}"
+
+
+def als_png(roh: bytes) -> bytes | None:
+    """Beliebiges Bild in PNG wandeln – Tk zeigt nur PNG, GIF und PPM.
+
+    Der Katalog-Weiterleiter der Instanz liefert JPEG. Gewandelt wird mit
+    `sips`, das in macOS steckt: So bleibt dieses Werkzeug ohne
+    Bildbibliothek.
+    """
+    if not roh:
+        return None
+    if roh[:4] == b"\x89PNG":
+        return roh
+    quelle = os.path.join(tempfile.gettempdir(),
+                          f"brickfolio-ref-{uuid.uuid4().hex}")
+    ziel = quelle + ".png"
+    try:
+        with open(quelle, "wb") as f:
+            f.write(roh)
+        subprocess.run(["sips", "-s", "format", "png", quelle, "--out", ziel],
+                       check=False, timeout=30,
+                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        if os.path.isfile(ziel) and os.path.getsize(ziel):
+            with open(ziel, "rb") as f:
+                return f.read()
+        return None
+    except (subprocess.SubprocessError, OSError):
+        return None
+    finally:
+        for p in (quelle, ziel):
+            try:
+                os.remove(p)
+            except OSError:
+                pass
+
+
+def auf_groesse(roh: bytes, kante: int) -> bytes | None:
+    """Ein PNG auf die längste Kante bringen – stufenlos.
+
+    Tk kann von sich aus nur ganzzahlig verkleinern (halb, drittel, …), und
+    dazwischen gibt es nichts: Aus 512 px wird 256 oder 171, sonst nichts.
+    `sips` rechnet sauber auf jede Größe – und steckt in macOS, kostet also
+    keine Bibliothek.
+    """
+    if not roh:
+        return None
+    quelle = os.path.join(tempfile.gettempdir(),
+                          f"brickfolio-skal-{uuid.uuid4().hex}.png")
+    try:
+        with open(quelle, "wb") as f:
+            f.write(roh)
+        fertig = subprocess.run(
+            ["sips", "-Z", str(kante), "-s", "format", "png", quelle,
+             "--out", quelle], check=False, timeout=30,
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        if fertig.returncode != 0 or not os.path.getsize(quelle):
+            return roh                     # dann eben ungeändert
+        with open(quelle, "rb") as f:
+            return f.read()
+    except (subprocess.SubprocessError, OSError):
+        return roh
+    finally:
+        try:
+            os.remove(quelle)
+        except OSError:
+            pass
+
+
+# ------------------------------------------------------------- Automatik
+#
+# Damit der Scanner von selbst auslösen kann, muss er merken, ob sich im
+# gemerkten Bereich etwas getan hat. Das geschieht **hier**, auf diesem
+# Rechner: Der Bildschirmausschnitt wird auf 24 × 24 Pixel eingedampft und
+# mit dem vorigen verglichen. Nach außen geht dabei nichts – erst wenn das
+# Bild zur Ruhe gekommen ist, wird eine einzige Anfrage geschickt.
+#
+# Das ist auch der Grund, warum die Automatik der Erkennung nicht schadet,
+# sondern nützt: Sie wartet, bis die Figur still gehalten wird. Genau daran
+# scheitern die meisten Versuche von Hand – Bewegungsunschärfe kostet mehr
+# Treffer als schlechtes Licht.
+FINGER_KANTE = 24
+AUTO_TAKT = 0.6            # Sekunden zwischen zwei Messungen
+AUTO_RUHE = 3              # so viele Takte muss das Bild still stehen
+AUTO_PAUSE = 3.0           # Mindestabstand zweier Anfragen, in Sekunden
+AUTO_JE_MINUTE = 12        # Obergrenze; die Instanz selbst bremst bei 40
+
+# Drehscheiben. Manche Verkäufer stellen die Figur auf einen Teller, der sich
+# dauernd dreht – dann wird das Bild **nie** still, und ein Wächter, der auf
+# Ruhe wartet, löste dort niemals aus. Also die zweite Regel: Hält die
+# Bewegung an, ohne dass sie ein Sprung wäre, dreht sich offenbar etwas, und
+# dann wird eben mittendrin geschickt.
+AUTO_DREH_TAKTE = 6        # so lange Bewegung am Stück gilt als „es dreht sich"
+AUTO_SPRUNG = 3.0          # ab diesem Vielfachen der Schwelle: neuer Artikel
+AUTO_ANSICHTEN = 4         # so viele Ansichten je Artikel genügen
+# Nach so vielen erfolglosen Anfragen am Stück hört der Dreh-Auslöser auf.
+# Denn er kann eine Drehscheibe nicht von irgendeiner anderen anhaltenden
+# Bewegung unterscheiden: Eine Laufschrift, ein Countdown, ein scrollender
+# Chat im gemerkten Bereich sehen für ihn genauso aus. Wo aber dreimal
+# hintereinander nichts zu erkennen war, bringt ein viertes Bild desselben
+# Flecks auch nichts – dann besser schweigen, bis sich wirklich etwas ändert.
+AUTO_LEERLAUF = 3
+
+# Ab welcher Abweichung „ruhig" aufhört und „etwas Neues" anfängt. Ein
+# Bildschirmabzug ist pixelgenau, ein Videobild rauscht – deshalb drei
+# Stufen statt einer geratenen Zahl.
+EMPFINDLICHKEIT = {
+    "hoch":     (1.0, 2.5),
+    "mittel":   (2.0, 5.0),
+    "niedrig":  (3.5, 10.0),
+}
+
+
+def fingerabdruck(roh: bytes, kante: int = FINGER_KANTE) -> list | None:
+    """Ein Bild auf ein paar hundert Helligkeitswerte eindampfen.
+
+    Über BMP, nicht über Tk: `tk.PhotoImage` darf nur der Hauptfaden anfassen,
+    und gemessen wird im Hintergrund. BMP hat dafür genau die richtige Menge
+    Format – ein Kopf mit fester Länge, dahinter die Bildpunkte.
+    """
+    if not roh:
+        return None
+    quelle = os.path.join(tempfile.gettempdir(),
+                          f"brickfolio-wacht-{uuid.uuid4().hex}.png")
+    ziel = quelle + ".bmp"
+    try:
+        with open(quelle, "wb") as f:
+            f.write(roh)
+        subprocess.run(["sips", "-z", str(kante), str(kante), "-s", "format",
+                        "bmp", quelle, "--out", ziel], check=False, timeout=20,
+                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        if not os.path.isfile(ziel):
+            return None
+        with open(ziel, "rb") as f:
+            d = f.read()
+        if len(d) < 54:
+            return None
+        beginn = int.from_bytes(d[10:14], "little")
+        breite = int.from_bytes(d[18:22], "little", signed=True)
+        hoehe = abs(int.from_bytes(d[22:26], "little", signed=True))
+        proz = int.from_bytes(d[28:30], "little") // 8
+        if breite <= 0 or hoehe <= 0 or proz < 3:
+            return None
+        # BMP-Zeilen sind auf vier Byte aufgerundet. Ob sie von oben oder von
+        # unten kommen, ist hier gleichgültig – verglichen wird immer nur mit
+        # einem Abzug derselben Herkunft.
+        zeile = (breite * proz + 3) // 4 * 4
+        if len(d) < beginn + zeile * hoehe:
+            return None
+        return [sum(d[beginn + y * zeile + x * proz:
+                      beginn + y * zeile + x * proz + 3]) // 3
+                for y in range(hoehe) for x in range(breite)]
+    except (subprocess.SubprocessError, OSError, ValueError):
+        return None
+    finally:
+        for p in (quelle, ziel):
+            try:
+                os.remove(p)
+            except OSError:
+                pass
+
+
+def abweichung(a: list, b: list) -> float:
+    """Wie weit zwei Fingerabdrücke auseinanderliegen – 0 heißt gleich."""
+    if not a or not b or len(a) != len(b):
+        return 999.0
+    return sum(abs(x - y) for x, y in zip(a, b)) / len(a)
+
+
+def in_zwischenablage(bild: bytes) -> bool:
+    """Das Bild in die Zwischenablage legen – für den zweiten Weg.
+
+    Dann geht es in der App weiter wie bisher: ins Scannen-Feld klicken,
+    ⌘V, und der gewohnte Ablauf mit allen Knöpfen läuft. Das Werkzeug muss
+    dafür nichts können, was die App nicht schon kann.
+    """
+    pfad = os.path.join(tempfile.gettempdir(),
+                        f"brickfolio-ablage-{uuid.uuid4().hex}.png")
+    try:
+        with open(pfad, "wb") as f:
+            f.write(bild)
+        befehl = ('set the clipboard to (read (POSIX file "%s") '
+                  'as «class PNGf»)' % pfad)
+        fertig = subprocess.run(["osascript", "-e", befehl], check=False,
+                                timeout=20, stdout=subprocess.DEVNULL,
+                                stderr=subprocess.DEVNULL)
+        return fertig.returncode == 0
+    except (subprocess.SubprocessError, OSError):
+        return False
+    finally:
+        try:
+            os.remove(pfad)
+        except OSError:
+            pass
+
+
+def reste_aufraeumen(hoechstens_alt: float = 3600.0) -> int:
+    """Eigene Zwischendateien wegräumen, die ein Absturz hinterlassen hat.
+
+    Im ordentlichen Betrieb entsteht kein Rest: Jede dieser Dateien wird im
+    `finally` ihres Erzeugers gelöscht. Wird das Programm aber hart beendet –
+    Absturz, „Sofort beenden", Abmelden mitten im Wächtertakt –, bleibt der
+    gerade laufende Abzug liegen. Einzeln ist das nichts; es sind aber
+    **Bildschirmausschnitte**, und die sollen nicht wochenlang herumliegen,
+    bis macOS von sich aus aufräumt.
+
+    Nur die eigenen Namensmuster, nur im Temp-Verzeichnis, und nur was älter
+    als eine Stunde ist – ein zweites, gerade laufendes Fenster soll seine
+    Dateien nicht unter den Händen weggelöscht bekommen.
+    """
+    muster = ("brickfolio-livescan-", "brickfolio-ref-", "brickfolio-skal-",
+              "brickfolio-wacht-", "brickfolio-ablage-", "brickfolio-bereich-")
+    ordner = tempfile.gettempdir()
+    jetzt = time.time()
+    weg = 0
+    try:
+        namen = os.listdir(ordner)
+    except OSError:
+        return 0
+    for name in namen:
+        if not name.startswith(muster):
+            continue
+        pfad = os.path.join(ordner, name)
+        try:
+            if not os.path.isfile(pfad):
+                continue
+            if jetzt - os.path.getmtime(pfad) < hoechstens_alt:
+                continue
+            os.remove(pfad)
+            weg += 1
+        except OSError:
+            pass
+    return weg
+
+
+def _multipart(felder: dict, grenze: str) -> bytes:
+    """Kleiner Formular-Zusammenbau – damit dieses Werkzeug ohne
+    Fremdbibliotheken auskommt."""
+    teile = []
+    for name, (dateiname, typ, inhalt) in felder.items():
+        teile.append(f"--{grenze}\r\n".encode())
+        teile.append((f'Content-Disposition: form-data; name="{name}"; '
+                      f'filename="{dateiname}"\r\n'
+                      f"Content-Type: {typ}\r\n\r\n").encode())
+        teile.append(inhalt)
+        teile.append(b"\r\n")
+    teile.append(f"--{grenze}--\r\n".encode())
+    return b"".join(teile)
+
+
+# --------------------------------------------------------- Bildschirmfoto
+
+def rahmen_ziehen() -> bytes | None:
+    """Den Rahmen von macOS ziehen lassen – dieselbe Auswahl wie bei ⌘⇧4.
+
+    Warum nicht selbst gebaut: Die eingebaute kennt jeder, sie zeigt die
+    Maße mit, lässt sich mit der Leertaste verschieben und mit Esc abbrechen.
+    Und sie kostet keine Zeile Code.
+    """
+    return _screencapture(["-i"])
+
+
+def bereich_aufnehmen(bereich: tuple) -> bytes | None:
+    x, y, b, h = bereich
+    return _screencapture(["-R", f"{x},{y},{b},{h}"])
+
+
+def _screencapture(zusatz: list) -> bytes | None:
+    pfad = os.path.join(tempfile.gettempdir(),
+                        f"brickfolio-livescan-{uuid.uuid4().hex}.png")
+    try:
+        subprocess.run(["screencapture", "-x", "-t", "png"] + zusatz + [pfad],
+                       check=False, timeout=120,
+                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        # Bei Abbruch (Esc) legt screencapture keine Datei an.
+        if not os.path.isfile(pfad) or os.path.getsize(pfad) == 0:
+            return None
+        with open(pfad, "rb") as f:
+            return f.read()
+    except (subprocess.SubprocessError, OSError):
+        return None
+    finally:
+        try:
+            os.remove(pfad)
+        except OSError:
+            pass
+
+
+# ------------------------------------------------------- Bereich merken
+
+def bereich_waehlen(wurzel: tk.Tk) -> tuple | None:
+    """Einen festen Bereich merken – für Serien aus demselben Ausschnitt.
+
+    macOS' eigene Auswahl verrät leider nicht, *wo* gezogen wurde. Deshalb
+    hier ein eigener Weg – aber **ohne durchsichtiges Fenster**: Der erste
+    Versuch legte eine halbdurchsichtige Fläche über den Bildschirm, und die
+    kam auf macOS schwarz und undurchsichtig heraus. Statt an der
+    Durchsichtigkeit herumzuraten, wird jetzt ein **Abbild** des Bildschirms
+    gezeigt: ein gewöhnliches, deckendes Fenster, in dem man den Rahmen
+    zieht. Sieht genauso aus, kann aber nicht schiefgehen.
+    """
+    roh_pfad = os.path.join(tempfile.gettempdir(),
+                            f"brickfolio-bereich-{uuid.uuid4().hex}.png")
+    try:
+        # `-D 1`: nur der Hauptbildschirm. Ohne das legt screencapture bei
+        # mehreren Monitoren mehrere Dateien an, und keine heißt wie erwartet.
+        subprocess.run(["screencapture", "-x", "-t", "png", "-D", "1",
+                        roh_pfad], check=False, timeout=60,
+                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        if not os.path.isfile(roh_pfad) or os.path.getsize(roh_pfad) == 0:
+            return None
+
+        fenster = tk.Toplevel(wurzel)
+        fenster.title("Bereich markieren")
+        fenster.attributes("-topmost", True)
+        fenster.config(cursor="crosshair")
+
+        # Tk kann PNG von sich aus – dafür braucht es keine Bibliothek.
+        bild = tk.PhotoImage(file=roh_pfad)
+        breite_pkt = wurzel.winfo_screenwidth()
+        hoehe_pkt = wurzel.winfo_screenheight()
+
+        # Auf Retina hat das Abbild doppelt so viele Bildpunkte wie der
+        # Bildschirm Punkte hat. Und damit das Fenster auf den Schirm passt,
+        # wird zusätzlich verkleinert – beides steckt in `teiler`.
+        teiler = max(1, round(bild.width() / breite_pkt))
+        passt = 1
+        while bild.width() // (teiler * passt) > breite_pkt - 80 \
+                or bild.height() // (teiler * passt) > hoehe_pkt - 140:
+            passt += 1
+        klein = bild.subsample(teiler * passt)
+        # Von Fensterpunkt zu Bildschirmpunkt: genau dieser Faktor.
+        faktor = passt
+
+        flaeche = tk.Canvas(fenster, width=klein.width(),
+                            height=klein.height(), highlightthickness=0)
+        flaeche.pack()
+        flaeche.create_image(0, 0, anchor="nw", image=klein)
+        flaeche.create_text(klein.width() // 2, 26, fill="#39b54a",
+                            font=("Helvetica", 15, "bold"),
+                            text="Rahmen um das Videobild ziehen  ·  "
+                                 "Esc bricht ab")
+        stand = {"x": 0, "y": 0, "rahmen": None, "fertig": None}
+
+        def runter(e):
+            stand["x"], stand["y"] = e.x, e.y
+            if stand["rahmen"]:
+                flaeche.delete(stand["rahmen"])
+            stand["rahmen"] = flaeche.create_rectangle(
+                e.x, e.y, e.x, e.y, outline="#39b54a", width=3)
+
+        def ziehen(e):
+            if stand["rahmen"]:
+                flaeche.coords(stand["rahmen"], stand["x"], stand["y"],
+                               e.x, e.y)
+
+        def hoch(e):
+            x1, y1 = min(stand["x"], e.x), min(stand["y"], e.y)
+            x2, y2 = max(stand["x"], e.x), max(stand["y"], e.y)
+            if (x2 - x1) * faktor > 40 and (y2 - y1) * faktor > 40:
+                stand["fertig"] = (x1 * faktor, y1 * faktor,
+                                   (x2 - x1) * faktor, (y2 - y1) * faktor)
+            fenster.destroy()
+
+        flaeche.bind("<ButtonPress-1>", runter)
+        flaeche.bind("<B1-Motion>", ziehen)
+        flaeche.bind("<ButtonRelease-1>", hoch)
+        fenster.bind("<Escape>", lambda _: fenster.destroy())
+        fenster.focus_force()
+        wurzel.wait_window(fenster)
+        return stand["fertig"]
+    finally:
+        try:
+            os.remove(roh_pfad)
+        except OSError:
+            pass
+
+
+# ------------------------------------------------------------ Oberfläche
+
+class LiveScanner:
+    def __init__(self, wurzel: tk.Tk):
+        self.wurzel = wurzel
+        self.daten = lesen()
+        self.instanz = Instanz(self.daten.get("adresse", ""),
+                               self.daten.get("token", ""))
+        self.bereich = tuple(self.daten["bereich"]) if self.daten.get(
+            "bereich") else None
+        self.treffer = None
+        # Der Vorschlag, dem die Karte gerade gehört. Nicht dasselbe wie
+        # `treffer`: Preis und Katalogbild kommen aus Hintergrundfäden und
+        # treffen manchmal erst ein, wenn längst der nächste Scan läuft.
+        # Alles, was von dort zurückkommt, wird gegen diesen hier geprüft.
+        self.gewaehlt = None
+        # Die Verlaufszeile, auf der wir gerade stehen – nach einem Scan die
+        # oberste, nach einem Rücksprung eine ältere.
+        self.eintrag = None
+        self.letztes_bild = None      # der gerade gezeigte Ausschnitt
+        # Alle Aufnahmen zum aktuellen Stand – auf einer Drehscheibe sind das
+        # mehrere Ansichten derselben Figur. `bilder_an` sind die Nummern
+        # derer, die beim Buchen als Foto an den Artikel gehen.
+        self.bilder = []
+        self.bilder_an = set()
+        self.listen = []
+        self.post = queue.Queue()
+        self.beschaeftigt = False
+        # Der Wächter läuft in einem eigenen Faden; `wacht` ist sein
+        # Ausschalter. Bewusst ein schlichtes Attribut und keine Tk-Variable –
+        # die dürfte er von dort aus nicht lesen.
+        self.wacht = False
+        self.stufe = self.daten.get("empfindlichkeit", "mittel")
+        self.auto_anfragen = []       # Zeitpunkte der letzten Minute
+        # Erfolglose automatische Anfragen am Stück. Geschrieben wird das im
+        # Erkennungsfaden, gelesen im Wächterfaden – beides sind einzelne
+        # Zuweisungen auf eine Zahl, und zwei Erkennungen gleichzeitig
+        # verhindert `beschaeftigt`.
+        self.auto_leer = 0
+        self.auto_lauf = False        # war der letzte Auslöser der Wächter?
+        self._blinkt = None           # läuft gerade ein Wunsch-Blinken?
+        # Welche Aufnahme schon an welchem Artikel hängt – damit dasselbe
+        # Bild nicht dreimal in derselben Galerie landet, wenn eine Figur auf
+        # mehreren Wegen gebucht wird. Nur die Prüfsummen, nicht die Bilder.
+        self.fotos = set()
+
+        wurzel.title("Brickfolio Live-Scanner")
+        wurzel.attributes("-topmost", True)
+        self._bauen()
+        self._hoehe_festlegen()
+        wurzel.after(120, self._post_abarbeiten)
+        if not self.instanz.token:
+            wurzel.after(300, self.zugang_zeigen)
+
+    def _hoehe_festlegen(self):
+        """Fenstergröße aus dem wirklichen Bedarf der Karte bestimmen.
+
+        Vorher standen hier feste Zahlen, und die stimmten nur so lange, bis
+        eine Reihe dazukam: Nach drei Erweiterungen war die Mindesthöhe zu
+        klein geworden, das Fenster ließ sich auf eine Größe ziehen, in der
+        **das Preisfeld unten heraushing** – und wer es nicht sieht, hält es
+        für kaputt. Also fragt das Fenster jetzt selbst, wie viel es braucht.
+
+        Der Verlauf ist das Einzige, was mitwächst, und damit auch das
+        Einzige, was nachgeben darf – drei seiner sieben Zeilen müssen ihm
+        aber bleiben, sonst ist er als Sprungbrett nutzlos.
+        """
+        self.wurzel.update_idletasks()
+        verlauf = self.verlauf.winfo_reqheight()
+        # Die Reihe mit den Ansichten steht noch nicht da – sie erscheint erst,
+        # wenn eine Figur aus mehreren Winkeln kam. Ihren Platz trotzdem schon
+        # einplanen: Sonst schöbe sie später etwas anderes aus dem Fenster,
+        # und zwar genau in dem Augenblick, in dem man am meisten zu tun hat.
+        # **Der innere Rahmen**, nicht das Fenster: Eine Leinwand gibt die
+        # Größe ihres Inhalts nicht nach oben weiter. Über das Fenster
+        # gefragt kämen hier 265 px heraus – die Wunschgröße der leeren
+        # Leinwand – und das Fenster startete winzig.
+        noetig = (self.innen.winfo_reqheight() + MINI_KANTE + 40
+                  - verlauf * 4 // 7)
+        schirm = self.wurzel.winfo_screenheight()
+        # Die Mindesthöhe war der volle Bedarf der Karte, gedeckelt auf
+        # Bildschirmhöhe minus 80. Gedacht war sie gegen ein Fenster, in dem
+        # unten etwas heraushängt – bewirkt hat sie auf kleinen Bildschirmen
+        # das Gegenteil: Es ließ sich nicht kleiner ziehen als der Schirm
+        # hoch ist, der untere Teil blieb unerreichbar, und scrollen ging
+        # nicht. Seit der Inhalt scrollt, ist die Sperre die Antwort auf ein
+        # Problem, das es nicht mehr gibt. 300 px lassen den Auslöser und die
+        # ersten Reihen stehen; alles Weitere holt man mit dem Rad.
+        self.wurzel.minsize(540, 300)
+        self.wurzel.geometry("560x{}".format(min(noetig + verlauf * 4 // 7,
+                                                 schirm - 120)))
+
+    # ------------------------------------------------- Scrollbare Fläche
+    def _scrollflaeche(self):
+        """Den Inhalt in eine Fläche legen, die scrollt statt abzuschneiden.
+
+        Vorher war die Karte ein einziger Stapel im Fenster. Passte sie
+        nicht, fielen die untersten Reihen weg – Verlauf und „Zugang …"
+        waren auf einem kleinen Bildschirm schlicht nicht erreichbar, und
+        die Mindesthöhe (Bildschirm minus 80) verhinderte auch noch, das
+        Fenster kleiner zu ziehen.
+
+        Auf einem großen Bildschirm soll sich nichts ändern: Ist die Fläche
+        höher als der Inhalt, wird der innere Rahmen auf die volle Höhe
+        gezogen. Nur dann greift `expand=True` beim Verlauf, und nur so
+        wächst er wie bisher mit.
+        """
+        aussen = ttk.Frame(self.wurzel)
+        aussen.pack(fill="both", expand=True)
+        self.leinwand = tk.Canvas(aussen, highlightthickness=0, takefocus=0,
+                                  background=self.wurzel.cget("background"))
+        self.leinwand.pack(side="left", fill="both", expand=True)
+        self.balken = ttk.Scrollbar(aussen, orient="vertical",
+                                    command=self.leinwand.yview)
+        self.leinwand.configure(yscrollcommand=self.balken.set)
+
+        self.innen = ttk.Frame(self.leinwand, padding=10)
+        self._innen_id = self.leinwand.create_window(
+            (0, 0), window=self.innen, anchor="nw")
+        self.innen.bind("<Configure>", self._scroll_nachfuehren)
+        self.leinwand.bind("<Configure>", self._scroll_nachfuehren)
+        self.wurzel.bind_all("<MouseWheel>", self._rad)
+        return self.innen
+
+    def _scroll_nachfuehren(self, _ereignis=None):
+        """Breite, Höhe und Scrollbereich des Inhalts nachziehen.
+
+        **Nicht** über `bbox("all")`: Die Leinwand kennt die Ausmaße ihres
+        Fensterelements erst, nachdem sie es gezeichnet hat. Beim ersten
+        Durchlauf kam dort `None` zurück, der Scrollbereich blieb leer – und
+        damit ließ sich nichts schieben, obwohl die Bildlaufleiste dastand.
+        Das sah aus wie ein hängendes Fenster.
+
+        Die Höhe ist das Maximum aus Bedarf und Fläche: Ist Platz übrig,
+        wird der innere Rahmen auf die volle Höhe gezogen, sonst griffe
+        `expand=True` beim Verlauf nicht und er wüchse nicht mehr mit.
+        """
+        breite = self.leinwand.winfo_width()
+        hoch = max(self.innen.winfo_reqheight(), self.leinwand.winfo_height())
+        if (breite, hoch) == getattr(self, "_scroll_stand", None):
+            return                     # sonst ruft sich das gegenseitig auf
+        self._scroll_stand = (breite, hoch)
+        self.leinwand.itemconfigure(self._innen_id, width=breite, height=hoch)
+        self.leinwand.configure(scrollregion=(0, 0, breite, hoch))
+        self._balken_pruefen()
+
+    def _balken_pruefen(self):
+        """Die Leiste nur zeigen, wenn es etwas zu schieben gibt.
+
+        Mit Spielraum von 12 px: Ohne den flackert sie am Rand des
+        Umschlagpunkts. Die Leiste nimmt Breite weg, der Text bricht anders
+        um, der Inhalt wird höher – und braucht die Leiste wieder.
+        """
+        noetig = self.innen.winfo_reqheight()
+        hat = self.leinwand.winfo_height()
+        sichtbar = bool(self.balken.winfo_ismapped())
+        if not sichtbar and noetig > hat:
+            self.balken.pack(side="right", fill="y")
+        elif sichtbar and noetig <= hat - 12:
+            self.balken.pack_forget()
+
+    def _rad(self, ereignis):
+        """Mausrad – aber nur, wo es hingehört.
+
+        `bind_all` bekommt jedes Rad-Ereignis, auch das aus den beiden
+        Listen und aus dem Fenster mit dem großen Bild. Über einer Liste
+        soll die Liste scrollen, nicht die Karte darunter; im Bildfenster
+        geht die Karte gar nichts an.
+        """
+        if ereignis.widget.winfo_toplevel() is not self.wurzel:
+            return
+        ziel = ereignis.widget
+        listen = [w for w in (getattr(self, "liste", None),
+                              getattr(self, "verlauf", None)) if w]
+        while ziel is not None:
+            if ziel in listen:
+                return
+            ziel = getattr(ziel, "master", None)
+        if self.innen.winfo_reqheight() <= self.leinwand.winfo_height():
+            return                       # nichts zu schieben
+        schritt = ereignis.delta
+        # macOS zählt in Einzelschritten, Windows und X11 in 120ern.
+        if abs(schritt) >= 120:
+            schritt //= 120
+        self.leinwand.yview_scroll(-schritt, "units")
+
+    # ------------------------------------------------------------ Aufbau
+    def _bauen(self):
+        r = self._scrollflaeche()
+        # Die Textzeilen brachen fest bei 350 px um – aus einer Zeit, in der
+        # das Fenster schmal war. Wer es breitzieht, bekam den Setnamen
+        # trotzdem über drei Zeilen, während rechts eine Handbreit leer
+        # blieb. Jetzt richtet sich der Umbruch nach der wirklichen Breite.
+        self._breite_labels = []
+        r.bind("<Configure>", self._umbruch_anpassen)
+
+        self.ausloeser = ttk.Button(r, text="▣  Rahmen ziehen und senden",
+                                    command=self.rahmen_senden)
+        self.ausloeser.pack(fill="x", ipady=6)
+
+        zweite = ttk.Frame(r)
+        zweite.pack(fill="x", pady=(6, 0))
+        ttk.Button(zweite, text="🎯 Bereich merken",
+                   command=self.bereich_merken).pack(side="left")
+        self.k_bereich = ttk.Button(zweite, text="📷 Aus Bereich",
+                                    command=self.bereich_senden,
+                                    state="normal" if self.bereich else "disabled")
+        self.k_bereich.pack(side="left", padx=(6, 0))
+
+        # Von selbst auslösen, wenn im gemerkten Bereich eine neue Figur
+        # hochgehalten wird. Das widerspricht dem „ein Auslöser = eine
+        # Anfrage" **nicht**: Gemessen wird hier auf dem Rechner, und
+        # geschickt wird erst, wenn sich etwas geändert hat *und* das Bild
+        # danach still steht. Das sind weniger Anfragen, als ein Mensch
+        # auslöst, der im Zweifel zweimal drückt.
+        autoreihe = ttk.Frame(r)
+        autoreihe.pack(fill="x", pady=(6, 0))
+        self.automatik = tk.BooleanVar(value=False)
+        self.k_automatik = ttk.Checkbutton(
+            autoreihe, variable=self.automatik, command=self._automatik_schalten,
+            text="⏱ Von selbst, wenn sich im Bereich etwas tut",
+            state="normal" if self.bereich else "disabled")
+        self.k_automatik.pack(side="left")
+        ttk.Label(autoreihe, text="Empfindlichkeit:").pack(side="left",
+                                                           padx=(10, 4))
+        self.empfindlich = ttk.Combobox(autoreihe, state="readonly", width=8,
+                                        values=list(EMPFINDLICHKEIT))
+        self.empfindlich.set(self.daten.get("empfindlichkeit", "mittel"))
+        self.empfindlich.pack(side="left")
+        self.empfindlich.bind("<<ComboboxSelected>>", self._empfindlich_merken)
+        # Eigene Zeile, nicht die allgemeine Statuszeile: Der Wächter meldet
+        # sich jede Sekunde, und er soll dabei nicht überschreiben, was gerade
+        # zum Treffer dasteht.
+        # Wird erst eingeblendet, wenn der Wächter läuft – sonst nähme eine
+        # leere Zeile dauerhaft Höhe weg, die unten der Verlauf braucht.
+        self.autostand = ttk.Label(r, text="", foreground="#888")
+
+        # Der andere Weg: nicht hier weitermachen, sondern das Bild der App
+        # geben und dort den gewohnten Ablauf nehmen.
+        self.k_ablage = ttk.Button(r, text="📋 Bild in die Zwischenablage "
+                                           "(dann ⌘V in der App)",
+                                   command=self.in_ablage, state="disabled")
+        self.k_ablage.pack(fill="x", pady=(6, 0))
+
+        self.stand = ttk.Label(r, text="", foreground="#666")
+        self.stand.pack(fill="x", pady=(8, 4))
+
+        # Links die eigene Aufnahme, rechts das Katalogbild der gewählten
+        # Figur. Nebeneinander sieht man auf einen Blick, ob der Vorschlag
+        # passt – Zahlen allein sagen das nicht.
+        # Die **ganze Fläche** hinter beiden Bildern wird grün, sobald die
+        # Figur schon irgendwo eingetragen ist – nicht nur ein Streifen
+        # außen herum. Im Stream schaut man auf das Bild, nicht auf die
+        # Zeile darunter, und eine Farbfläche sieht man aus dem Augenwinkel,
+        # während der Verkäufer schon weiterredet.
+        #
+        # Alles hier sind bewusst **klassische** Tk-Widgets: ttk nimmt keine
+        # eigene Hintergrundfarbe entgegen, dort ginge es nur über ein
+        # eigenes Design. Für vier Rahmen und zwei Beschriftungen lohnt das
+        # nicht – und umfärben lässt sich so jedes einzeln.
+        self.rahmen_aus = self.wurzel.cget("background")
+        self.rahmen = tk.Frame(r, background=self.rahmen_aus)
+        self.rahmen.pack(pady=(2, 0))
+        bilder = tk.Frame(self.rahmen, background=self.rahmen_aus)
+        bilder.pack(padx=RAHMEN_DICK, pady=RAHMEN_DICK)
+        links = tk.Frame(bilder, background=self.rahmen_aus)
+        links.pack(side="left")
+        b_links = tk.Label(links, text="Aufnahme", foreground="#666",
+                           background=self.rahmen_aus)
+        b_links.pack()
+        self.vorschau = tk.Label(links, bd=1, relief="solid", width=17,
+                                 height=9, text="—", foreground="#999")
+        self.vorschau.pack()
+        rechts = tk.Frame(bilder, background=self.rahmen_aus)
+        rechts.pack(side="left", padx=(8, 0))
+        b_rechts = tk.Label(rechts, text="BrickLink", foreground="#666",
+                            background=self.rahmen_aus)
+        b_rechts.pack()
+        self.referenz = tk.Label(rechts, bd=1, relief="solid", width=17,
+                                 height=9, text="—", foreground="#999")
+        self.referenz.pack()
+        # Die Bildfelder selbst bleiben außen vor: Solange kein Bild da ist,
+        # steht dort ein „—", und mit grünem Grund sähe das nach Ladefehler
+        # aus. Sobald ein Bild kommt, deckt es die Fläche ohnehin.
+        self._gruen_flaechen = [self.rahmen, bilder, links, rechts,
+                                b_links, b_rechts]
+        # Grau auf Grün liest sich schlecht – die beiden Beschriftungen
+        # wechseln deshalb die Schriftfarbe mit.
+        self._gruen_schriften = [b_links, b_rechts]
+        self._vorschaubild = None          # Verweise halten, sonst weggeräumt
+        self._referenzbild = None
+        self._referenz_roh = None
+        # Ein Klick aufs Bild zeigt es groß. Der Zeigefinger sagt vorher,
+        # dass da etwas geht – ohne ihn probiert es niemand aus.
+        for feld, hole, titel in (
+                (self.vorschau, lambda: self.letztes_bild, "Aufnahme"),
+                (self.referenz, lambda: self._referenz_roh, "BrickLink")):
+            feld.config(cursor="pointinghand")
+            feld.bind("<Button-1>",
+                      lambda _e, h=hole, t=titel: self.gross_zeigen(h(), t))
+
+        # Kam die Figur aus mehreren Ansichten, stehen sie hier zum Aussuchen.
+        # Bei nur einer Aufnahme bleibt die Reihe weg – sie wäre dann eine
+        # Auswahl ohne Wahl und nähme dem Verlauf nur Platz.
+        self.ansichtsreihe = ttk.Frame(r)
+        self._mini_bilder = []
+        self._mini_rahmen = []
+
+        haken = ttk.Frame(r)
+        haken.pack(fill="x", pady=(6, 0))
+        self.mitschicken = tk.BooleanVar(value=bool(
+            self.daten.get("foto_mitschicken", True)))
+        ttk.Checkbutton(
+            haken, variable=self.mitschicken, command=self._foto_merken,
+            text="📷 Foto mitspeichern").pack(side="left")
+        self.ton = tk.BooleanVar(value=bool(self.daten.get("ton", True)))
+        ttk.Checkbutton(
+            haken, variable=self.ton, command=self._ton_merken,
+            text="🔔 Ton bei Wunsch").pack(side="left", padx=(14, 0))
+        # Die Erkennung sucht **ein** Objekt im Bild und nimmt das
+        # deutlichste. Steht die Figur auf einem Ständer, ist das der Ständer.
+        # Wer einen Figuren-Stream sieht, kann sich das ersparen.
+        self.nur_figuren = tk.BooleanVar(
+            value=bool(self.daten.get("nur_figuren", False)))
+        ttk.Checkbutton(
+            haken, variable=self.nur_figuren, command=self._figuren_merken,
+            text="🧍 Nur Figuren").pack(side="left", padx=(14, 0))
+
+        ttk.Separator(r).pack(fill="x", pady=4)
+
+        # Die Erkennung liefert **mehrere** Kandidaten mit Trefferquote –
+        # bei ähnlichen Figuren liegt die richtige oft auf Platz zwei. Vorher
+        # nahm dieses Werkzeug stumm den ersten; jetzt stehen sie alle da.
+        self.kandidaten = []
+        self.liste = tk.Listbox(r, height=4, activestyle="dotbox",
+                                exportselection=False)
+        self.liste.pack(fill="x")
+        self.liste.bind("<<ListboxSelect>>", self._auswahl_geaendert)
+
+        # Nummer von Hand nachtragen. Stand früher **nur** da, wenn die
+        # Erkennung nichts hergab – aber der häufigere Fall ist der andere:
+        # Es werden Vorschläge geliefert, und keiner davon stimmt. In vielen
+        # Streams wird die Nummer angesagt oder eingeblendet, und dann ist
+        # Tippen der kürzeste Weg zur richtigen Figur. Deshalb ist das Feld
+        # jetzt immer da; die paar Pixel sind es wert.
+        self.nummerreihe = ttk.Frame(r)
+        self.nummerreihe.pack(fill="x", pady=(6, 0))
+        ttk.Label(self.nummerreihe, text="✎ Nr. nachtragen:").pack(side="left")
+        # 11 Zeichen reichen für jede Katalognummer („sw0417a", „75192-1")
+        # und halten die Reihe innerhalb der Mindestbreite.
+        self.nummerfeld = ttk.Entry(self.nummerreihe, width=11)
+        self.nummerfeld.pack(side="left", padx=(6, 0))
+        self.nummerfeld.bind("<Return>", lambda _: self.nummer_suchen())
+        ttk.Button(self.nummerreihe, text="Suchen",
+                   command=self.nummer_suchen).pack(side="left", padx=(6, 0))
+        # Kurz halten: Die Reihe muss auch in die Mindestbreite des Fensters
+        # passen, sonst schiebt sie den „Suchen"-Knopf hinaus.
+        ttk.Label(self.nummerreihe, text="z. B. sw0402, 75192, 3001",
+                  foreground="#888").pack(side="left", padx=(8, 0))
+
+        self.name = ttk.Label(r, text="—", font=("Helvetica", 14, "bold"))
+        self.name.pack(fill="x", pady=(6, 0))
+        self.unter = ttk.Label(r, text="", foreground="#444")
+        self.unter.pack(fill="x", pady=(2, 0))
+        self.besitz = ttk.Label(r, text="", font=("Helvetica", 12, "bold"))
+        self.besitz.pack(fill="x", pady=(4, 0))
+        # Zweite Zeile, weil sie eine andere Frage beantwortet: Die erste
+        # sagt „habe ich es", diese „habe ich es mir vorgemerkt". Beides in
+        # einer Zeile bräuchte zwei Farben.
+        self.woanders = ttk.Label(r, text="", foreground="#0b5fa5")
+        self.woanders.pack(fill="x", pady=(1, 0))
+        # Dritte Zeile: der Katalog, nicht euer Bestand. Blasser gesetzt,
+        # weil sie beim Mitbieten seltener zählt als die beiden darüber.
+        self.setliste = ttk.Label(r, text="", foreground="#666")
+        self.setliste.pack(fill="x", pady=(1, 0))
+
+        self._breite_labels = [self.stand, self.name, self.unter,
+                               self.besitz, self.woanders, self.setliste]
+
+        # Zustand und Einkaufspreis gehören zum Eintrag, nicht zur Figur –
+        # deshalb hier und nicht im Treffer. Sie gelten für „Sammlung" und
+        # „Liste"; die Wunschliste kennt beides nicht und lässt es liegen.
+        erfassung = ttk.Frame(r)
+        erfassung.pack(fill="x", pady=(10, 0))
+        ttk.Label(erfassung, text="Zustand:").pack(side="left")
+        self.zustand = tk.StringVar(value=self.daten.get("zustand", "used"))
+        for wert, beschriftung in (("used", "Gebraucht"), ("new", "Neu")):
+            ttk.Radiobutton(erfassung, text=beschriftung, value=wert,
+                            variable=self.zustand).pack(side="left",
+                                                        padx=(6, 0))
+        # An der Variablen, nicht am Knopf: So wird auch gemerkt, was von
+        # anderer Stelle gesetzt wird, und es gibt nur einen Weg.
+        self.zustand.trace_add("write", self._zustand_merken)
+        ttk.Label(erfassung, text="Einkauf:").pack(side="left", padx=(14, 0))
+        self.preisfeld = ttk.Entry(erfassung, width=7)
+        self.preisfeld.pack(side="left", padx=(4, 0))
+        ttk.Label(erfassung, text="€").pack(side="left", padx=(2, 0))
+
+        reihe = ttk.Frame(r)
+        reihe.pack(fill="x", pady=(10, 0))
+        self.k_sammlung = ttk.Button(reihe, text="＋ Sammlung",
+                                     command=self.zur_sammlung,
+                                     state="disabled")
+        self.k_sammlung.pack(side="left")
+        self.k_merken = ttk.Button(reihe, text="☆ Merken",
+                                   command=self.merken, state="disabled")
+        self.k_merken.pack(side="left", padx=(6, 0))
+
+        listenreihe = ttk.Frame(r)
+        listenreihe.pack(fill="x", pady=(6, 0))
+        self.listenwahl = ttk.Combobox(listenreihe, state="readonly",
+                                       width=20, values=[])
+        self.listenwahl.pack(side="left")
+        self.k_liste = ttk.Button(listenreihe, text="🛒 drauf",
+                                  command=self.auf_liste, state="disabled")
+        self.k_liste.pack(side="left", padx=(6, 0))
+        # Wer in der App eine neue Einkaufsliste anlegt, soll sie hier
+        # bekommen, ohne das Werkzeug neu zu starten.
+        ttk.Button(listenreihe, text="↻", width=3,
+                   command=self.listen_laden).pack(side="left", padx=(6, 0))
+        # Und wer bei jemand Neuem kauft, soll die Liste hier anlegen können
+        # statt mitten im Stream in die App zu wechseln.
+        ttk.Button(listenreihe, text="＋ Liste", width=8,
+                   command=self.liste_anlegen).pack(side="left", padx=(6, 0))
+
+        ttk.Separator(r).pack(fill="x", pady=8)
+        # Der Verlauf ist nicht nur Protokoll: Ein Klick holt den ganzen
+        # Stand von damals zurück – Vorschläge, gewählte Zeile, Aufnahme.
+        # Ohne `exportselection=False` nähme diese Auswahl der Trefferliste
+        # darüber ihre eigene weg; zwei Listen streiten sich sonst um dieselbe
+        # Markierung, und oben stünde plötzlich keine Zeile mehr hervor.
+        self.verlauf_daten = []
+        self.verlauf = tk.Listbox(r, height=7, activestyle="none",
+                                  exportselection=False)
+        self.verlauf.pack(fill="both", expand=True)
+        self.verlauf.bind("<<ListboxSelect>>", self._verlauf_geklickt)
+        self._verlauf_laden()
+
+        fuss = ttk.Frame(r)
+        fuss.pack(fill="x", pady=(8, 0))
+        ttk.Button(fuss, text="Zugang …", command=self.zugang_zeigen
+                   ).pack(side="left")
+        ttk.Label(fuss, text="⏎ löst auch aus", foreground="#888"
+                  ).pack(side="right")
+        self.wurzel.bind("<Return>", lambda _: self.rahmen_senden())
+
+    # --------------------------------------------------------- Meldungen
+    def melden(self, text: str, in_verlauf: bool = False, daten=None):
+        """`daten` ist der Stand, zu dem diese Zeile zurückführt – die
+        Vorschläge, die gewählte Zeile und die Aufnahme. Zeilen ohne so einen
+        Datensatz (Buchungen, Fehler, angelegte Listen) führen nirgendwohin.
+        """
+        self.stand.config(text=text)
+        if not in_verlauf:
+            return
+        # Die Markierung klebt am Eintrag, nicht an der Zeilennummer: Oben
+        # kommt etwas dazu, also rutscht alles darunter um eins.
+        vorher = self.verlauf.curselection()
+        self.verlauf.insert(0, time.strftime("%H:%M  ") + text)
+        self.verlauf_daten.insert(0, daten)
+        if daten is None:
+            # Blass gesetzt heißt: von hier führt kein Weg zurück. Das sagt
+            # es, ohne an jede zweite Zeile ein Zeichen zu hängen.
+            self.verlauf.itemconfig(0, foreground="#888")
+        if vorher:
+            self.verlauf.selection_clear(0, "end")
+            self.verlauf.selection_set(vorher[0] + 1)
+        # Ältere Aufnahmen loslassen – die Zeile bleibt anklickbar, sie zeigt
+        # dann nur die Karte ohne die Bilder von damals.
+        for alt in self.verlauf_daten[VERLAUF_BILDER:]:
+            if alt is not None and alt.get("bilder"):
+                alt["bilder"] = []
+                alt["bilder_an"] = set()
+        if self.verlauf.size() > VERLAUF_ZEILEN:
+            self.verlauf.delete(VERLAUF_ZEILEN, "end")
+            del self.verlauf_daten[VERLAUF_ZEILEN:]
+        self._verlauf_sichern()
+
+    # ------------------------------------------------------ Verlauf halten
+    def _verlauf_sichern(self):
+        """Die obersten Zeilen wegschreiben – ohne die Aufnahmen.
+
+        Die Vorschläge selbst sind ein paar hundert Byte und kommen mit: Damit
+        führt ein Rücksprung auch nach dem Neustart noch zur richtigen Figur,
+        samt gewählter Variante. Nur das Bild fehlt dann, und dafür steht
+        „Aufnahme nicht mehr da" – ein Bildschirmausschnitt hat auf der Platte
+        nichts verloren.
+        """
+        zeilen = []
+        for i in range(min(self.verlauf.size(), VERLAUF_MERKEN)):
+            daten = self.verlauf_daten[i] \
+                if i < len(self.verlauf_daten) else None
+            if daten is not None:
+                # Die Aufnahmen bleiben draußen – ein Bildschirmausschnitt
+                # hat auf der Platte nichts verloren. Mit ihnen fällt auch
+                # die Auswahl weg, die sich ohne Bilder auf nichts bezöge.
+                daten = {k: v for k, v in daten.items()
+                         if k not in ("bild", "bilder", "bilder_an")}
+            zeilen.append({"text": self.verlauf.get(i), "daten": daten})
+        try:
+            with open(VERLAUF_DATEI, "w") as f:
+                json.dump({"datum": time.strftime("%d.%m."),
+                           "zeilen": zeilen}, f)
+            os.chmod(VERLAUF_DATEI, stat.S_IRUSR | stat.S_IWUSR)
+        except (OSError, TypeError, ValueError):
+            pass          # ein nicht geschriebener Verlauf ist kein Grund
+                          # zum Stehenbleiben
+
+    def _verlauf_laden(self):
+        """Den Verlauf der vorigen Sitzung unter eine Trennzeile hängen.
+
+        Die Trennzeile ist nicht Zierrat: In den Zeilen steht nur die Uhrzeit.
+        Ohne den Strich sähe „22:41" von gestern aus wie von eben.
+        """
+        try:
+            with open(VERLAUF_DATEI) as f:
+                gespeichert = json.load(f)
+        except (OSError, ValueError):
+            return
+        zeilen = gespeichert.get("zeilen") or []
+        if not zeilen:
+            return
+        # Das Datum nur, wenn es ein anderer Tag war – „vorige Sitzung vom
+        # 10.08." liest sich seltsam, wenn heute der 10.08. ist.
+        datum = gespeichert.get("datum")
+        self.verlauf.insert("end", "── vorige Sitzung{} ──".format(
+            " vom " + datum if datum and datum != time.strftime("%d.%m.")
+            else ""))
+        self.verlauf_daten.append(None)
+        self.verlauf.itemconfig(self.verlauf.size() - 1, foreground="#888")
+        for e in zeilen:
+            daten = e.get("daten")
+            if daten is not None and not daten.get("kandidaten"):
+                daten = None          # ohne Vorschläge führt sie nirgendwohin
+            self.verlauf.insert("end", e.get("text") or "")
+            self.verlauf_daten.append(daten)
+            if daten is None:
+                self.verlauf.itemconfig(self.verlauf.size() - 1,
+                                        foreground="#888")
+
+    def _umbruch_anpassen(self, ereignis):
+        """Die Textzeilen so breit umbrechen lassen, wie das Fenster ist.
+
+        Tk bricht ein Label nur an einer festen Pixelzahl um – ohne die
+        bräche es gar nicht, mit einer festen stünde der Text in einer
+        Spalte, während rechts eine Handbreit leer bleibt. Also bei jeder
+        Größenänderung nachziehen.
+
+        Die 24 px sind der Innenabstand des Rahmens plus etwas Luft; ohne
+        sie schöbe der letzte Buchstabe die Bildlaufleiste an.
+        """
+        breite = max(200, ereignis.width - 24)
+        if breite == getattr(self, "_letzte_breite", 0):
+            return                       # jede Mausbewegung neu wäre unnötig
+        self._letzte_breite = breite
+        for label in self._breite_labels:
+            label.config(wraplength=breite)
+
+    # ------------------------------------------------------- Wunschliste
+    def _blinken_beenden(self, grundfarbe=None):
+        """Ein laufendes Blinken abbrechen und die Fläche geradeziehen.
+
+        Muss bei jedem Treffferwechsel geschehen: Sonst blinkte der Wunsch
+        von eben über der Figur von jetzt – dieselbe Sorte Falschaussage wie
+        eine Karte, die zum vorigen Scan gehört.
+        """
+        if self._blinkt is not None:
+            try:
+                self.wurzel.after_cancel(self._blinkt)
+            except (tk.TclError, ValueError):
+                pass
+            self._blinkt = None
+        if grundfarbe is not None:
+            self._flaeche_faerben(grundfarbe)
+
+    def _flaeche_faerben(self, farbe):
+        """Die ganze Fläche hinter beiden Bildern umfärben."""
+        hell = farbe != self.rahmen_aus
+        for flaeche in self._gruen_flaechen:
+            flaeche.config(background=farbe)
+        for schrift in self._gruen_schriften:
+            schrift.config(foreground="#ffffff" if hell else "#666")
+
+    def _wunsch_blinken(self, grundfarbe, uebrig: int = WUNSCH_TAKTE):
+        """Zwischen der Wunschfarbe und dem Grund hin und her.
+
+        Gegen den **Grund**, nicht gegen Grau: Eine Figur kann auf der
+        Wunschliste stehen und trotzdem schon in einem eurer Sets stecken.
+        Dann soll das Grün nicht verschwinden, sondern das Blinken darüber
+        laufen – beide Nachrichten bleiben lesbar.
+        """
+        if uebrig <= 0:
+            self._blinkt = None
+            self._flaeche_faerben(grundfarbe)
+            return
+        self._flaeche_faerben(WUNSCH_AN if uebrig % 2 else grundfarbe)
+        self._blinkt = self.wurzel.after(
+            WUNSCH_TAKT, self._wunsch_blinken, grundfarbe, uebrig - 1)
+
+    def _foto_merken(self):
+        self.daten["foto_mitschicken"] = bool(self.mitschicken.get())
+        schreiben(self.daten)
+
+    def _figuren_merken(self):
+        self.daten["nur_figuren"] = bool(self.nur_figuren.get())
+        schreiben(self.daten)
+        self.melden("Es werden nur noch Figuren gezeigt."
+                    if self.nur_figuren.get()
+                    else "Figuren, Sets und Teile werden gezeigt.")
+
+    def _ton_merken(self):
+        self.daten["ton"] = bool(self.ton.get())
+        schreiben(self.daten)
+        if self.ton.get():
+            ton_spielen()          # einmal hören, wie laut es ist
+
+    def _bild_einpassen(self, bild: bytes, kante: int = BILDKANTE):
+        """Auf Anzeigegröße bringen und in Tk laden.
+
+        Erst `sips` (stufenlos, sauber gerechnet), und nur falls das nicht
+        will, Tks eigene grobe Halbierung als Rückfall.
+        """
+        kleiner = auf_groesse(bild, kante) or bild
+        roh = tk.PhotoImage(data=base64.b64encode(kleiner).decode("ascii"))
+        teiler = 1
+        while roh.width() // teiler > kante or roh.height() // teiler > kante:
+            teiler += 1
+        return roh if teiler == 1 else roh.subsample(teiler)
+
+    def gross_zeigen(self, roh: bytes, titel: str):
+        """Ein Bild groß zeigen – als Popup, das jeder Klick wieder schließt.
+
+        Die beiden Daumennägel sind 250 px breit: genug, um zu erkennen, ob
+        der Vorschlag grob passt, aber nicht, um eine Bedruckung zu
+        vergleichen. Genau daran hängt bei Varianten die Entscheidung.
+
+        Kein richtiges Fenster, sondern eine rahmenlose Fläche mit
+        `grab_set`: Damit gehen **alle** Klicks hierher, drinnen wie
+        draußen, und ein einziger Aufruf räumt es weg. Wer im Stream schnell
+        weiterklickt, soll nicht erst ein Fenster schließen müssen.
+
+        Größer als der Bildschirm wird es nicht – ein Katalogbild kann 1600
+        px hoch sein.
+        """
+        if not roh:
+            return
+        kante = max(400, min(self.wurzel.winfo_screenheight() - 160, 1100))
+        f = tk.Toplevel(self.wurzel)
+        # Erst unsichtbar aufbauen. Auf macOS greift „-topmost" nicht, solange
+        # das Fenster noch nicht angezeigt wurde – gesetzt man es vorher,
+        # öffnet sich das Popup **hinter** dem Scanner, und der Klick, mit dem
+        # man es nach vorn holen will, schließt es sofort wieder.
+        f.withdraw()
+        f.overrideredirect(True)              # kein Rahmen, kein Titelbalken
+        try:
+            bild = self._bild_einpassen(roh, kante)
+        except tk.TclError:
+            f.destroy()
+            self.melden("Dieses Bild lässt sich nicht darstellen.")
+            return
+        # Der Verweis muss am Fenster hängen, sonst räumt Python ihn weg und
+        # die Fläche bleibt leer – der klassische Tk-Stolperstein.
+        f._bild = bild
+        rahmen = tk.Frame(f, background="#222", padx=3, pady=3)
+        rahmen.pack()
+        tk.Label(rahmen, image=bild, bd=0).pack()
+        tk.Label(rahmen, text=titel + "   ·   Klick schließt",
+                 background="#222", foreground="#ddd").pack(pady=(3, 1))
+
+        # Mittig auf dem **Bildschirm**, nicht über dem Fenster: Das Popup
+        # ist mit 1100 px oft breiter als der Scanner selbst, und dann
+        # rutschte es an den linken Rand statt in die Mitte.
+        f.update_idletasks()
+        x = (f.winfo_screenwidth() - f.winfo_width()) // 2
+        y = (f.winfo_screenheight() - f.winfo_height()) // 2
+        f.geometry("+{}+{}".format(max(0, x), max(0, y)))
+
+        def zu(_ereignis=None):
+            try:
+                f.grab_release()
+            except tk.TclError:
+                pass
+            # Das Hauptfenster bekommt seine Ebene zurück – es soll ja über
+            # dem Stream bleiben.
+            try:
+                self.wurzel.attributes("-topmost", True)
+            except tk.TclError:
+                pass
+            f.destroy()
+
+        for ereignis in ("<Button-1>", "<Button-2>", "<Button-3>",
+                         "<Escape>", "<FocusOut>"):
+            f.bind(ereignis, zu)
+        # Das Hauptfenster steht selbst auf „immer oben", damit es über dem
+        # Stream bleibt. Zwei Fenster auf derselben Ebene sortiert macOS
+        # nicht verlässlich, und das rahmenlose zieht dabei den Kürzeren –
+        # das Popup ging hinter dem Scanner auf. Also nimmt es dem
+        # Hauptfenster die Ebene für die Dauer der Anzeige weg; `zu()` gibt
+        # sie zurück.
+        self.wurzel.attributes("-topmost", False)
+        # Jetzt erst anzeigen – und in dieser Reihenfolge, sonst greift
+        # „-topmost" auf macOS gar nicht.
+        f.deiconify()
+        f.update_idletasks()
+        f.lift()
+        f.attributes("-topmost", True)
+        # Anwendungsweite Sperre, **nicht** `grab_set_global`: Damit gehen
+        # Klicks überall im Scanner hierher – also auch „daneben" – und das
+        # Popup räumt sich selbst weg. Global würde bei einem hängenden
+        # Popup der ganze Bildschirm blockieren; das ist es nicht wert.
+        # Klicks in andere Programme fängt `<FocusOut>` ab.
+        f.grab_set()
+        f.focus_force()
+
+    # -------------------------------------------------------- Ansichten
+    def _ansichten_aufbauen(self):
+        """Die Aufnahmen zum aktuellen Stand als Daumennägel zum Aussuchen.
+
+        Auf einer Drehscheibe kommen drei, vier Bilder derselben Figur
+        zusammen, und welches das schönste ist, sieht man – der Rechner
+        nicht. Ein grüner Rahmen heißt: Dieses hier wird beim Buchen an den
+        Artikel gehängt. Mehrere dürfen es sein, keines auch.
+        """
+        for altes in self.ansichtsreihe.winfo_children():
+            altes.destroy()
+        self._mini_bilder = []
+        self._mini_rahmen = []
+        if len(self.bilder) < 2:
+            self.ansichtsreihe.pack_forget()
+            return
+        self.ansichtsreihe.pack(fill="x", pady=(4, 0), after=self.rahmen)
+        # Die Beschriftung sagt, was die Markierung bedeutet. Ohne sie sieht
+        # „grüner Rand **und** Häkchen" nach zwei verschiedenen Zuständen aus,
+        # obwohl es einer ist – die Frage kam prompt. Sie steht **über** den
+        # Bildern: Daneben nähme sie ihnen die Breite, und sechs Daumennägel
+        # plus Satz passen nicht in ein schmales Fenster.
+        self.ansichtstext = ttk.Label(self.ansichtsreihe, text="")
+        self.ansichtstext.pack(anchor="w")
+        streifen = ttk.Frame(self.ansichtsreihe)
+        streifen.pack(fill="x")
+        for i, roh in enumerate(self.bilder[:MINI_HOECHSTENS]):
+            try:
+                mini = self._bild_einpassen(roh, MINI_KANTE)
+            except tk.TclError:
+                continue
+            self._mini_bilder.append(mini)      # Verweise halten
+            rahmen = tk.Frame(streifen, padx=MINI_RAND, pady=MINI_RAND)
+            rahmen.pack(side="left", padx=(0, 5))
+            feld = tk.Label(rahmen, image=mini, bd=0, cursor="pointinghand")
+            feld.pack()
+            # Das Häkchen liegt **über** dem Bild, in der oberen Ecke. Es ist
+            # das, was man von weitem sieht – die Randfarbe allein geht in
+            # einer Reihe aus sechs Bildern unter.
+            haken = tk.Label(rahmen, text="✓", background=MINI_AN,
+                             foreground="#ffffff", bd=0, padx=2,
+                             font=("Helvetica", 11, "bold"))
+            for teil in (rahmen, feld, haken):
+                teil.bind("<Button-1>",
+                          lambda _e, k=i: self._ansicht_umschalten(k))
+            # Die Nummer mitführen, nicht aus der Position ableiten: Lässt
+            # sich eine Aufnahme nicht darstellen, fehlt ihr Daumennagel, und
+            # von da an zeigte jeder Rahmen auf das falsche Bild.
+            self._mini_rahmen.append((i, rahmen, haken, feld))
+        rest = len(self.bilder) - MINI_HOECHSTENS
+        if rest > 0:
+            ttk.Label(streifen, text="+{}".format(rest),
+                      foreground="#888").pack(side="left", padx=(6, 0))
+        self._ansichten_faerben()
+
+    def _ansichten_faerben(self):
+        """Gewählt heißt: grüner Rand **und** Häkchen – das ist **eine**
+        Markierung, nicht zwei. Ungewählt tritt zurück: blasser Rand, kein
+        Zeichen. Daneben steht in Worten, wie viele es sind."""
+        an = len(self.bilder_an)
+        self.ansichtstext.config(text="✓ wird angehängt ({} von {}):".format(
+            an, len(self.bilder)) if an
+            else "kein Foto anhängen ({} zur Wahl):".format(len(self.bilder)))
+        for nummer, rahmen, haken, feld in self._mini_rahmen:
+            an = nummer in self.bilder_an
+            rahmen.config(background=MINI_AN if an else MINI_AUS)
+            if an:
+                haken.place(in_=feld, relx=1.0, rely=0.0, anchor="ne")
+                haken.lift()
+            else:
+                haken.place_forget()
+
+    def _ansicht_umschalten(self, nummer: int):
+        """Ein Klick zeigt die Ansicht groß **und** schaltet sie an oder ab.
+
+        Zwei Dinge auf einen Klick, weil im Stream jeder zusätzliche
+        Handgriff einer zu viel ist: Wer hinsieht, will meist auch wählen.
+        """
+        if nummer in self.bilder_an:
+            self.bilder_an.discard(nummer)
+        else:
+            self.bilder_an.add(nummer)
+        if 0 <= nummer < len(self.bilder):
+            self.letztes_bild = self.bilder[nummer]
+            self._vorschau_zeigen(self.letztes_bild)
+        self._ansichten_faerben()
+        self.melden("{} von {} Ansichten werden angehängt.".format(
+            len(self.bilder_an), len(self.bilder)))
+
+    def _vorschau_zeigen(self, bild: bytes):
+        try:
+            self._vorschaubild = self._bild_einpassen(bild)
+        except tk.TclError:
+            self.vorschau.config(image="", text="(nicht\ndarstellbar)",
+                                 width=17, height=9)
+            return
+        self.vorschau.config(image=self._vorschaubild, text="",
+                             width=self._vorschaubild.width(),
+                             height=self._vorschaubild.height())
+
+    def _referenz_zeigen(self, bild):
+        """Das Katalogbild rechts – oder ein ehrlicher Hinweis, wenn keins da
+        ist. Eine leere Fläche ließe offen, ob es lädt oder fehlt."""
+        # Die Rohdaten bleiben liegen: Der Daumennagel ist auf 250 px
+        # gerechnet, die Großansicht braucht das Bild in voller Größe.
+        self._referenz_roh = bild
+        if not bild:
+            self._referenzbild = None
+            self.referenz.config(image="", text="kein\nKatalogbild",
+                                 foreground="#999", width=17, height=9)
+            return
+        try:
+            self._referenzbild = self._bild_einpassen(bild)
+        except tk.TclError:
+            self.referenz.config(image="", text="(nicht\ndarstellbar)",
+                                 width=17, height=9)
+            return
+        self.referenz.config(image=self._referenzbild, text="",
+                             width=self._referenzbild.width(),
+                             height=self._referenzbild.height())
+
+    def _post_abarbeiten(self):
+        try:
+            while True:
+                art, last = self.post.get_nowait()
+                # Was ein Hintergrundfaden zu **einem bestimmten** Vorschlag
+                # herausgefunden hat. Ist inzwischen ein anderer gewählt –
+                # weil der nächste Scan schneller war als BrickLink –, gehört
+                # es nicht mehr auf die Karte. Ohne diese Prüfung überschrieb
+                # der Preis der vorigen Figur Namen, Nummer und Bestand der
+                # neuen, und die drei Knöpfe buchten wieder die alte.
+                if art == "fuer":
+                    fuer, art, last = last
+                    if fuer is not self.gewaehlt:
+                        continue
+                if art == "stand":
+                    self.melden(last)
+                elif art == "verlauf":
+                    self.melden(last, True)
+                elif art == "preis-leeren":
+                    # Sonst uebernaehme die naechste Figur stumm den Preis
+                    # der vorigen – der Zustand darf dagegen stehen bleiben.
+                    self.preisfeld.delete(0, "end")
+                elif art == "referenz":
+                    self._referenz_zeigen(last)
+                elif art == "vorschau":
+                    self._vorschau_zeigen(last)
+                    self.k_ablage.config(state="normal")
+                elif art == "auto-stand":
+                    # Nach dem Ausschalten liegt oft noch eine Meldung des
+                    # letzten Taktes hier – die füllte sonst eine Anzeige,
+                    # hinter der nichts mehr läuft.
+                    if self.wacht:
+                        self.autostand.config(text=last)
+                elif art == "auto-aus":
+                    # Der Wächter hat sich selbst beendet – ohne den Haken
+                    # nachzuziehen stünde er auf „an", während nichts läuft.
+                    self.wacht = False
+                    self.automatik.set(False)
+                    self.autostand.config(text="")
+                    self.melden(last, True)
+                elif art == "auto-los":
+                    # Ebenso: Wer eben ausgeschaltet hat, will keine Anfrage
+                    # mehr, auch wenn der letzte Takt sie schon beschlossen
+                    # hatte.
+                    if self.wacht:
+                        self._ausloesen(lambda b=last: b, automatisch=True)
+                elif art == "kandidaten":
+                    self._kandidaten_zeigen(last)
+                elif art == "nachtragen":
+                    self._nummer_eintragen(last)
+                elif art == "auffrischen":
+                    # Nur, wenn noch derselbe Stand auf dem Schirm steht –
+                    # sonst kommt der Bestand eines Scans an, von dem der
+                    # Anwender längst weitergegangen ist.
+                    if last is self.kandidaten and any(
+                            t is self.gewaehlt for t in last):
+                        wahl = self.liste.curselection()
+                        self._zeilen_schreiben(last)
+                        self.liste.selection_set(wahl[0] if wahl else 0)
+                        self._treffer_zeigen(self.gewaehlt, still=True)
+                elif art == "leeren":
+                    self._treffer_leeren()
+                elif art == "nummerfeld":
+                    # Nicht `bool(last)`: „ohne-fokus" ist wahr, und genau der
+                    # Unterschied entscheidet, ob der Eingabestrich springt.
+                    self.nummerfeld_zeigen(last)
+                elif art == "treffer":
+                    self._treffer_zeigen(last)
+                elif art == "frei":
+                    self.beschaeftigt = False
+                    self.ausloeser.config(state="normal")
+                elif art == "listen":
+                    # Die bisherige Wahl behalten, wenn es sie noch gibt –
+                    # sonst springt sie beim Aktualisieren mitten im
+                    # Abarbeiten auf eine andere Liste.
+                    vorher = self.listenwahl.get()
+                    self.listen = last
+                    namen = [l["name"] for l in last]
+                    self.listenwahl.config(values=namen)
+                    if namen:
+                        self.listenwahl.current(
+                            namen.index(vorher) if vorher in namen else 0)
+                    else:
+                        self.listenwahl.set("")
+                    self.melden("{} Einkaufsliste{}".format(
+                        len(namen), "" if len(namen) == 1 else "n"))
+                elif art == "listenwahl":
+                    # Kommt **nach** „listen": Wer eine Liste anlegt, will
+                    # auf sie buchen, nicht auf die erste im Alphabet.
+                    namen = list(self.listenwahl.cget("values"))
+                    if last in namen:
+                        self.listenwahl.current(namen.index(last))
+        except queue.Empty:
+            pass
+        # Hier mit, und zwar aus einem Grund, der nicht auf der Hand liegt:
+        # `_scroll_nachfuehren` setzt die Höhe des inneren Rahmens fest –
+        # damit ändert sich seine **tatsächliche** Größe nicht mehr, wenn der
+        # Inhalt wächst oder schrumpft, und genau das `<Configure>` bleibt
+        # aus, auf das die Nachführung horcht. Sie hing dadurch fest: Die
+        # Bildlaufleiste blieb stehen, obwohl längst alles hineinpasste.
+        # Der Takt läuft ohnehin; ein paar Abfragen alle 120 ms fallen nicht
+        # ins Gewicht, und damit stimmt es immer.
+        self._scroll_nachfuehren()
+        self.wurzel.after(120, self._post_abarbeiten)
+
+    # ------------------------------------------------------------ Zugang
+    def zugang_zeigen(self):
+        f = tk.Toplevel(self.wurzel)
+        f.title("Zugang zur Instanz")
+        f.attributes("-topmost", True)
+        r = ttk.Frame(f, padding=12)
+        r.pack(fill="both", expand=True)
+        ttk.Label(r, text="Adresse der Instanz").pack(anchor="w")
+        e_adresse = ttk.Entry(r, width=42)
+        e_adresse.insert(0, self.instanz.adresse or "http://localhost:8300")
+        e_adresse.pack(fill="x", pady=(0, 8))
+        ttk.Label(r, text="Benutzername").pack(anchor="w")
+        e_benutzer = ttk.Entry(r, width=42)
+        e_benutzer.insert(0, self.daten.get("benutzer", ""))
+        e_benutzer.pack(fill="x", pady=(0, 8))
+        ttk.Label(r, text="Passwort").pack(anchor="w")
+        e_passwort = ttk.Entry(r, width=42, show="•")
+        e_passwort.pack(fill="x", pady=(0, 8))
+        hinweis = ttk.Label(r, text="", foreground="#b00", wraplength=330)
+        hinweis.pack(fill="x")
+
+        def anmelden():
+            neue = Instanz(e_adresse.get().strip())
+            try:
+                neue.anmelden(e_benutzer.get().strip(), e_passwort.get())
+            except Fehler as e:
+                hinweis.config(text=str(e))
+                return
+            self.instanz = neue
+            self.daten.update({"adresse": neue.adresse,
+                               "benutzer": e_benutzer.get().strip(),
+                               "token": neue.token})
+            schreiben(self.daten)
+            self.listen_laden()
+            self.melden("Angemeldet.")
+            f.destroy()
+
+        ttk.Button(r, text="Anmelden", command=anmelden).pack(pady=(8, 0))
+        e_passwort.bind("<Return>", lambda _: anmelden())
+        e_passwort.focus_set()
+
+    def nummerfeld_zeigen(self, an):
+        """Das Feld steht immer da – hier geht es nur noch um den Fokus.
+
+        Fand die Erkennung nichts, ist Tippen der einzige Weg weiter, und dann
+        soll der Eingabestrich schon blinken. Hat der Wächter ausgelöst, darf
+        er ihn niemandem wegnehmen: Man tippt vielleicht gerade einen Preis.
+        """
+        if an is True:
+            self.nummerfeld.delete(0, "end")
+            self.nummerfeld.focus_set()
+
+    def _nummer_eintragen(self, neue: list):
+        """Die nachgeschlagene Nummer **zu** den Vorschlägen legen.
+
+        Nicht an ihre Stelle: Die Erkennung liefert oft etwas, das falsch ist,
+        ohne wertlos zu sein – beim Chewbacca auf dem Ständer erkennt sie den
+        Ständer. Wer die Nummer nachträgt, will die richtige Figur *dazu*,
+        nicht die Liste weggewischt. Und wer sich vertippt, hat die
+        Vorschläge noch.
+
+        Die Liste wird an Ort und Stelle erweitert, nicht ersetzt: Der
+        Verlaufseintrag hält genau diese Liste fest, und ein Rücksprung soll
+        das Nachgetragene wiederfinden.
+        """
+        if not self.kandidaten:
+            self._kandidaten_zeigen(neue)      # nichts erkannt – der alte Weg
+            return
+        vorhanden = {t["item_id"] for t in self.kandidaten}
+        dazu = [t for t in neue if t["item_id"] not in vorhanden]
+        if dazu:
+            self.kandidaten.extend(dazu)
+            wohin = len(self.kandidaten) - len(dazu)
+            # Die Kennung des Standes wächst mit: Sonst hielte der nächste
+            # Scan diesen hier für eine Wiederholung seiner selbst.
+            if self.eintrag is not None:
+                self.eintrag["ids"] = [t["item_id"] for t in self.kandidaten]
+            text = "✎ {} nachgetragen".format(
+                ", ".join(t["item_id"] for t in dazu))
+        else:
+            # Schon in der Liste – dann eben hinspringen statt verdoppeln.
+            wohin = next(i for i, t in enumerate(self.kandidaten)
+                         if t["item_id"] == neue[0]["item_id"])
+            text = "{} steht schon unter den Vorschlägen".format(
+                neue[0]["item_id"])
+        self._liste_fuellen(self.kandidaten, wohin)
+        self.nummerfeld.delete(0, "end")
+        # Erst jetzt melden: `_liste_fuellen` schreibt selbst in die
+        # Statuszeile, und was dort stehen bleiben soll, ist das hier.
+        # In den Verlauf kommt nur das wirklich Nachgetragene – und mit
+        # demselben Datensatz wie der Scan darunter, denn es ist derselbe
+        # Stand, nur um die getippte Nummer reicher. Ohne ihn wäre die Zeile
+        # blass und führte nirgendwohin: ausgerechnet die, die man später
+        # sucht.
+        self.melden(text, bool(dazu), self.eintrag if dazu else None)
+
+    def nummer_suchen(self):
+        """Von Hand eingetippte Nummer nachschlagen und wie einen Treffer
+        behandeln – samt Katalogbild, Preis und den drei Knöpfen."""
+        nummer = self.nummerfeld.get().strip()
+        if not nummer:
+            return
+        if not self.instanz.token:
+            self.melden("Erst anmelden (Zugang …).")
+            return
+        self.melden(f"Suche {nummer} im Katalog …")
+
+        def lauf():
+            alle = self.instanz.nummer_suchen(nummer)
+            if not alle:
+                self.post.put(("stand", f"{nummer} steht nicht im "
+                                        f"BrickLink-Katalog."))
+                return
+            # Denselben Weg wie ein erkannter Treffer nehmen: Bestand für
+            # alle auf einmal holen, dann anzeigen. Sonst stünde die Karte
+            # ohne „habt ihr schon" da.
+            frage = [{"item_id": t["item_id"], "item_type": t["item_type"]}
+                     for t in alle]
+            info = self.instanz.infos(frage)
+            for t in alle:
+                t["_info"] = info.get(t["item_id"], {})
+                # Merken, dass diese Zeile getippt und nicht erkannt wurde –
+                # „100 %" stünde dort sonst als Trefferquote, und eine
+                # Trefferquote ist es gerade nicht.
+                t["_getippt"] = True
+            self.post.put(("nachtragen", alle))
+        threading.Thread(target=lauf, daemon=True).start()
+
+    def liste_anlegen(self):
+        """Neue Einkaufsliste anlegen, ohne in die App zu wechseln.
+
+        Im Stream ist genau das der Engpass: Man kauft bei jemand Neuem, hat
+        keine Liste dafür, und bis man in der App eine angelegt hat, ist der
+        Artikel weg. Die neue Liste wird danach gleich ausgewählt – wer sie
+        anlegt, will auf sie buchen.
+        """
+        if not self.instanz.token:
+            self.melden("Erst anmelden (Zugang …).")
+            return
+        f = tk.Toplevel(self.wurzel)
+        f.title("Neue Einkaufsliste")
+        f.attributes("-topmost", True)
+        r = ttk.Frame(f, padding=12)
+        r.pack(fill="both", expand=True)
+        ttk.Label(r, text="Name der Liste").pack(anchor="w")
+        eingabe = ttk.Entry(r, width=34)
+        eingabe.pack(fill="x", pady=(0, 4))
+        # Ein Vorschlag mit dem heutigen Datum – so heißen die bestehenden
+        # Listen auch („Flohmarkt 04.08."), und die Hälfte ist damit getippt.
+        eingabe.insert(0, time.strftime(" %d.%m."))
+        eingabe.icursor(0)
+        hinweis = ttk.Label(r, text="", foreground="#b00", wraplength=300)
+        hinweis.pack(fill="x")
+
+        def anlegen():
+            name = eingabe.get().strip()
+            if not name:
+                hinweis.config(text="Ohne Namen geht es nicht.")
+                return
+            def lauf():
+                try:
+                    self.instanz.liste_anlegen(name)
+                except Fehler as e:
+                    self.post.put(("verlauf", "Liste anlegen: " + _meldung(e)))
+                    return
+                # Frisch holen statt selbst einsortieren: Die Instanz kennt
+                # die endgültige Reihenfolge, wir raten sie nicht.
+                self.post.put(("listen", self.instanz.listen()))
+                self.post.put(("listenwahl", name))
+                self.post.put(("verlauf", f"Liste »{name}« angelegt"))
+            threading.Thread(target=lauf, daemon=True).start()
+            f.destroy()
+
+        ttk.Button(r, text="Anlegen", command=anlegen).pack(pady=(8, 0))
+        eingabe.bind("<Return>", lambda _: anlegen())
+        eingabe.focus_set()
+
+    def listen_laden(self):
+        if not self.instanz.token:
+            self.melden("Erst anmelden (Zugang …).")
+            return
+        self.melden("Hole die Einkaufslisten …")
+        threading.Thread(
+            target=lambda: self.post.put(("listen", self.instanz.listen())),
+            daemon=True).start()
+
+    # ---------------------------------------------------------- Auslösen
+    def rahmen_senden(self):
+        self._ausloesen(rahmen_ziehen, versteckt=True)
+
+    def bereich_senden(self):
+        if not self.bereich:
+            self.melden("Erst einen Bereich merken.")
+            return
+        self._ausloesen(lambda: bereich_aufnehmen(self.bereich))
+
+    def bereich_merken(self):
+        self.wurzel.withdraw()
+        self.wurzel.update()
+        time.sleep(0.25)
+        gewaehlt = bereich_waehlen(self.wurzel)
+        self.wurzel.deiconify()
+        if gewaehlt:
+            self.bereich = gewaehlt
+            self.daten["bereich"] = list(gewaehlt)
+            schreiben(self.daten)
+            self.k_bereich.config(state="normal")
+            self.k_automatik.config(state="normal")
+            self.melden(f"Bereich gemerkt: {gewaehlt[2]}×{gewaehlt[3]}.")
+
+    # --------------------------------------------------------- Automatik
+    def _empfindlich_merken(self, *_egal):
+        self.stufe = self.empfindlich.get()
+        self.daten["empfindlichkeit"] = self.stufe
+        schreiben(self.daten)
+
+    def _automatik_schalten(self):
+        """Den Wächter an- oder abschalten."""
+        if not self.automatik.get():
+            self.wacht = False
+            self.autostand.config(text="")
+            self.autostand.pack_forget()
+            return
+        if not self.bereich:
+            self.automatik.set(False)
+            self.melden("Erst einen Bereich merken.")
+            return
+        self.stufe = self.empfindlich.get()
+        # Der Bereich wird aufgenommen, wie er ist – ohne das eigene Fenster
+        # wegzublenden, sonst flackerte es alle paar Sekunden. Liegt der
+        # Scanner über dem Bereich, fotografierte er also sich selbst. Das
+        # merkt man sonst erst an einer Reihe sinnloser Erkennungen.
+        x, y, b, h = self.bereich
+        fx, fy = self.wurzel.winfo_rootx(), self.wurzel.winfo_rooty()
+        fb, fh = self.wurzel.winfo_width(), self.wurzel.winfo_height()
+        if fx < x + b and x < fx + fb and fy < y + h and y < fy + fh:
+            self.automatik.set(False)
+            self.melden("Der Scanner liegt über dem gemerkten Bereich – "
+                        "so nähme er sich selbst auf. Fenster daneben "
+                        "schieben oder den Bereich neu merken.")
+            return
+        self.wacht = True
+        self.auto_anfragen = []
+        self.auto_leer = 0
+        self.autostand.config(text="⏱ sieht zu …")
+        # Direkt unter die Automatik-Reihe, nicht ans Ende der Karte.
+        self.autostand.pack(fill="x", after=self.k_automatik.master)
+        threading.Thread(target=self._wachen, daemon=True).start()
+        self.melden("Automatik an – es wird geschickt, sobald sich etwas tut "
+                    "und danach still steht.", True)
+
+    def _wachen(self):
+        """Den gemerkten Bereich im Auge behalten – ganz auf diesem Rechner.
+
+        Ausgelöst wird genau dann, wenn drei Dinge zusammenkommen: Es hat
+        sich etwas geändert, das Bild steht seither still, und es zeigt nicht
+        dasselbe wie beim letzten Mal. Die dritte Bedingung ist die
+        wichtigste – ohne sie schickte eine Figur, die eine Minute lang
+        stillgehalten wird, immer weiter dasselbe Bild.
+        """
+        letzter = None          # der Abzug vom Takt davor
+        gesendet = None         # der zuletzt geschickte
+        ruhe = 0                # so viele Takte steht das Bild schon still
+        # Beim ersten Takt gibt es nichts zu vergleichen, und das zählt als
+        # Änderung: Wer die Automatik einschaltet, während der Verkäufer
+        # gerade eine Figur hochhält, will diese Figur. Es kostet eine
+        # einzige Anfrage, und danach greift der gewöhnliche Ablauf.
+        bewegt = 999.0          # wie viel sich seit dem letzten Mal tat
+        letzte_anfrage = 0.0
+        dreht = 0               # Takte ununterbrochener, ruhiger Bewegung
+        ansichten = 0           # wie viele Anfragen seit dem letzten Sprung
+        while self.wacht:
+            beginn = time.time()
+            # Der Abzug wird aufgehoben, nicht nur gemessen: Löst dieser Takt
+            # aus, geht genau dieses Bild zur Erkennung. Ein zweiter Abzug
+            # wäre ein anderer Augenblick – und der eine, auf den es ankommt,
+            # ist der, in dem das Bild still stand.
+            roh = bereich_aufnehmen(self.bereich)
+            jetzt = fingerabdruck(roh)
+            if jetzt is None:
+                self.post.put(("auto-aus", "Der Bereich lässt sich nicht "
+                                           "aufnehmen – fehlt die "
+                                           "Berechtigung zur "
+                                           "Bildschirmaufnahme?"))
+                return
+            # `self.stufe` statt der Combobox: Ein Tk-Bedienelement darf nur
+            # der Hauptfaden anfassen, und hier läuft der Wächter.
+            still, neu = EMPFINDLICHKEIT.get(self.stufe,
+                                             EMPFINDLICHKEIT["mittel"])
+            d = abweichung(jetzt, letzter) if letzter else 999.0
+            letzter = jetzt
+            sprung = neu * AUTO_SPRUNG
+            if d < still:
+                ruhe += 1
+                dreht = 0
+            else:
+                ruhe = 0
+                bewegt = max(bewegt, d)
+                # Ein Sprung ist kein Drehen: Da greift jemand ins Bild oder
+                # stellt etwas Neues hin. Dann fängt das Zählen von vorn an –
+                # und der Artikel gilt als gewechselt, es dürfen also wieder
+                # Ansichten gesammelt werden.
+                if d > sprung:
+                    dreht = 0
+                    ansichten = 0
+                    # Neuer Artikel, neuer Versuch: Dass am vorigen nichts zu
+                    # erkennen war, sagt über diesen nichts.
+                    self.auto_leer = 0
+                else:
+                    dreht += 1
+            # Nur Anfragen der letzten Minute zählen.
+            self.auto_anfragen = [t for t in self.auto_anfragen
+                                  if beginn - t < 60]
+            grund = ""
+            # Zwei Wege zum Auslösen. Der erste ist der gewöhnliche: Das Bild
+            # ist zur Ruhe gekommen, die Figur wird stillgehalten.
+            # `== AUTO_RUHE`, nicht `>=`: genau in dem Takt, in dem sie
+            # eintritt – sonst löste jedes weitere Stillstehen erneut aus.
+            steht = ruhe == AUTO_RUHE and bewegt >= neu
+            # Der zweite ist die Drehscheibe: Es bewegt sich gleichmäßig
+            # weiter, ohne je stillzustehen. Dann wird mittendrin geschickt –
+            # lieber ein leicht bewegtes Bild als gar keins. `== `, damit es
+            # danach erst wieder nach AUTO_DREH_TAKTE Takten drankommt.
+            kreist = bool(dreht) and dreht % AUTO_DREH_TAKTE == 0
+            if steht or kreist:
+                if kreist and not steht and ansichten >= AUTO_ANSICHTEN:
+                    grund = "genug Ansichten dieses Artikels"
+                elif kreist and not steht \
+                        and self.auto_leer >= AUTO_LEERLAUF:
+                    # Es bewegt sich zwar, aber hier ist nichts zu holen.
+                    # Der Stillstand-Auslöser bleibt scharf – wer die Figur
+                    # ruhig hält, bekommt weiterhin seinen Versuch.
+                    grund = "hier war {}× nichts zu erkennen".format(
+                        self.auto_leer)
+                elif abweichung(jetzt, gesendet) < neu and gesendet:
+                    grund = "dasselbe Bild wie zuletzt"
+                elif self.beschaeftigt:
+                    grund = "die vorige Erkennung läuft noch"
+                elif beginn - letzte_anfrage < AUTO_PAUSE:
+                    grund = "Mindestabstand"
+                elif len(self.auto_anfragen) >= AUTO_JE_MINUTE:
+                    grund = "{}/Min. erreicht".format(AUTO_JE_MINUTE)
+                else:
+                    gesendet = jetzt
+                    letzte_anfrage = beginn
+                    bewegt = 0.0
+                    ansichten += 1
+                    self.auto_anfragen.append(beginn)
+                    self.post.put(("auto-los", roh))
+            self.post.put(("auto-stand", "⏱ {}  ·  Bewegung {:.1f}  ·  "
+                                         "{} Anfrage{} in der Minute{}".format(
+                "still" if ruhe else ("dreht sich" if dreht else "sieht zu"),
+                d if d < 900 else 0.0, len(self.auto_anfragen),
+                "" if len(self.auto_anfragen) == 1 else "n",
+                "  ·  wartet: " + grund if grund else "")))
+            rest = AUTO_TAKT - (time.time() - beginn)
+            if rest > 0:
+                time.sleep(rest)
+
+    def _ausloesen(self, aufnehmen, versteckt: bool = False,
+                   automatisch: bool = False):
+        if self.beschaeftigt:
+            return
+        if not self.instanz.token:
+            self.melden("Erst anmelden (Zugang …).")
+            return
+        self.beschaeftigt = True
+        self.auto_lauf = automatisch
+        self.ausloeser.config(state="disabled")
+        # Jetzt lesen, nicht im Faden: Ein Tk-Bedienelement gehört dem
+        # Hauptfaden.
+        nur_figuren = bool(self.nur_figuren.get())
+        # Beim Ziehen des Rahmens ist das eigene Fenster im Weg – es liegt
+        # ja über allem.
+        if versteckt:
+            self.wurzel.withdraw()
+            self.wurzel.update()
+            time.sleep(0.15)
+
+        def arbeit():
+            roh = aufnehmen()
+            if versteckt:
+                self.wurzel.after(0, self.wurzel.deiconify)
+            if not roh:
+                self.post.put(("stand", "Abgebrochen – oder die Berechtigung "
+                                        "zur Bildschirmaufnahme fehlt."))
+                self.post.put(("frei", None))
+                return
+            # Erst zeigen, dann fragen: Kommt nichts zurück, sieht man
+            # wenigstens, was geschickt wurde. Übernommen wird der Ausschnitt
+            # aber erst, wenn etwas erkannt wurde – siehe unten.
+            steht_schon = self.treffer is not None
+            if not steht_schon:
+                self.letztes_bild = roh
+            self.post.put(("vorschau", roh))
+            self.post.put(("stand", "Erkennung läuft …"))
+            try:
+                antwort = self.instanz.erkennen(roh)
+            except Fehler as e:
+                self.post.put(("verlauf", f"Fehler: {e}"))
+                self.post.put(("frei", None))
+                return
+            alle = antwort.get("items") or []
+            # Aussortieren, was keine Figur ist – aber mitzählen, wie viel
+            # das war. „Nichts erkannt" wäre sonst gelogen, und man suchte
+            # den Fehler beim Rahmen statt beim Haken.
+            aussortiert = 0
+            if nur_figuren:
+                figuren = [t for t in alle
+                           if (t.get("item_type") or "minifig") == "minifig"]
+                aussortiert = len(alle) - len(figuren)
+                alle = figuren
+            if automatisch:
+                # Dem Wächter sagen, ob sich das Hinsehen gelohnt hat. Nur er
+                # kann daraus schließen, dass in diesem Bereich nichts zu
+                # holen ist – die Bewegung allein sagt ihm das nicht.
+                self.auto_leer = self.auto_leer + 1 if not alle else 0
+            if not alle:
+                # Woran es lag, gilt in beiden Fällen – der Haken hat
+                # aussortiert, oder es war wirklich nichts da.
+                warum = "Nichts erkannt"
+                if aussortiert == 1:
+                    warum = "Keine Figur darunter – der Vorschlag war ein " \
+                            "Set oder Teil."
+                elif aussortiert:
+                    warum = "Keine Figur darunter – alle {} Vorschläge " \
+                            "waren Sets oder Teile.".format(aussortiert)
+            if not alle and steht_schon:
+                # Es steht schon eine Figur auf der Karte, und dieser Versuch
+                # hat nichts ergeben. Dann bleibt **alles**, wie es war –
+                # Karte, Knöpfe, Aufnahme.
+                #
+                # Früher wurde hier geräumt, aus Sorge, man könnte sonst die
+                # Figur von eben auf die Liste legen. Im Betrieb ist das
+                # Gegenteil das Problem: Der Wächter löst aus, während man
+                # gerade den Preis eintippt, findet nichts – und nimmt einem
+                # mitten in der Eingabe den Treffer weg, an dem man arbeitet.
+                # Ein Versuch, der nichts gefunden hat, hat auch nichts
+                # widerlegt. Erst eine erkannte Figur wechselt die Karte.
+                self.post.put(("vorschau", self.letztes_bild))
+                self.post.put(("stand", warum.rstrip(".")
+                               + " – der Treffer von eben bleibt stehen."))
+                self.post.put(("frei", None))
+                return
+            if not alle:
+                # Ohne Treffer auf der Karte gibt es nichts zu bewahren:
+                # aufräumen und das Nummernfeld anbieten.
+                self.post.put(("leeren", None))
+                # Beim Wächter ohne Fokus: Der Anwender tippt vielleicht
+                # gerade einen Preis, und ein Feld, das sich von selbst den
+                # Eingabestrich holt, während man schreibt, ist eine Zumutung.
+                self.post.put(("nummerfeld", "ohne-fokus" if automatisch
+                               else True))
+                if aussortiert:
+                    self.post.put(("stand", warum + " Haken »Nur Figuren« "
+                                                    "aus, oder die Nummer "
+                                                    "eintippen."))
+                else:
+                    self.post.put(("stand", "Nichts erkannt – enger rahmen, "
+                                            "abwarten bis die Figur still "
+                                            "hält, oder die Nummer "
+                                            "eintippen."))
+                self.post.put(("frei", None))
+                return
+            # Alle Kandidaten, nicht nur der erste – und für alle auf einmal
+            # der schnelle Blick in die eigene Datenbank. Das kostet eine
+            # Anfrage, keine je Figur.
+            # Jetzt erst gehört der Ausschnitt zum Stand: Er ist die Aufnahme
+            # zu **dieser** Figur, hängt als Foto an ihr und liegt im
+            # Verlaufseintrag. Ein Fehlversuch hat ihn nicht ersetzt.
+            self.letztes_bild = roh
+            frage = [{"item_id": t["item_id"],
+                      "item_type": t.get("item_type") or "minifig"}
+                     for t in alle]
+            gespeichert = self.instanz.infos(frage)
+            for t in alle:
+                t["_info"] = gespeichert.get(t["item_id"], {})
+            self.post.put(("kandidaten", alle))
+            self.post.put(("frei", None))
+
+        threading.Thread(target=arbeit, daemon=True).start()
+
+    # ----------------------------------------------------------- Treffer
+    def _kandidaten_zeigen(self, alle: list):
+        """Alle Vorschläge auflisten, den besten vorauswählen.
+
+        Bei ähnlichen Figuren – zwei Varianten desselben Kopfes etwa – liegt
+        die richtige oft auf Platz zwei. Wer nur den ersten sieht, legt die
+        falsche an und merkt es nie.
+        """
+        # Die Nummern mitschreiben, nicht nur die Anzahl: Beim Durchsehen
+        # hinterher will man wissen, *welche* Figur das war – „1 Vorschlag"
+        # sagt darüber nichts.
+        gezeigt = ["{} {} %".format(t["item_id"], t.get("score", "?"))
+                   for t in alle[:3]]
+        if len(alle) > 3:
+            gezeigt.append("+{}".format(len(alle) - 3))
+
+        # Dieselbe Figur zweimal hintereinander? Im Stream der Regelfall: Der
+        # Verkäufer dreht sie, das Bild kommt erneut zur Ruhe, der Wächter
+        # löst wieder aus. Zwei gleiche Zeilen sagen nicht mehr als eine – und
+        # sie schieben die Figur davor aus dem Blick. Also dieselbe Zeile
+        # weiterführen, mit Zähler und neuer Uhrzeit.
+        ids = [t["item_id"] for t in alle]
+        oben = self.verlauf_daten[0] if self.verlauf_daten else None
+        # Dieselbe Figur aus einem anderen Winkel? Zwei Anzeichen zusammen:
+        # Es ging schnell hintereinander, und die Vorschläge überschneiden
+        # sich. Genau das passiert auf einer Drehscheibe – jede Ansicht
+        # liefert etwas anderes, aber selten etwas völlig anderes.
+        #
+        # Sicher lässt sich das nicht unterscheiden: Zwei Figuren auf
+        # demselben Ständer haben denselben Ständer in den Vorschlägen. Es
+        # ist aber auch nicht schlimm, wenn einmal falsch zusammengefasst
+        # wird – **verworfen wird nichts**, die Liste wird nur länger, und
+        # die getroffene Auswahl bleibt stehen.
+        wiederholung = (oben is not None
+                        and time.time() - (oben.get("zeit") or 0)
+                        < ANSICHT_FENSTER
+                        and bool(set(ids) & set(oben.get("ids") or [])))
+        if wiederholung:
+            # Den bestehenden Datensatz weiterbenutzen, nicht ersetzen: Auf
+            # ihn zeigt schon die Verlaufszeile.
+            eintrag = oben
+            eintrag["mal"] = eintrag.get("mal", 1) + 1
+            vorher_gewuenscht = {t["item_id"]
+                                 for t in eintrag.get("kandidaten") or []
+                                 if _gewuenscht(t.get("_info") or {})}
+            alle, verbessert = _ansichten_vereinen(
+                eintrag.get("kandidaten") or [], alle)
+            eintrag["kandidaten"] = alle
+            eintrag["ids"] = [t["item_id"] for t in alle]
+            eintrag["zeit"] = time.time()
+            # Jede Ansicht wird aufgehoben – welche die schönste ist, sieht
+            # man selbst, und beim Buchen darf man aussuchen.
+            eintrag.setdefault("bilder", [])
+            eintrag.setdefault("bilder_an", set())
+            if self.letztes_bild is not None:
+                ansicht_dazulegen(eintrag, self.letztes_bild)
+                # Vorgewählt ist die Ansicht, in der die jetzt oberste Figur
+                # am deutlichsten zu sehen war – aus ihr stammt die beste
+                # Quote. Wer es anders will, klickt es anders.
+                if alle and alle[0]["item_id"] in verbessert:
+                    eintrag["bilder_an"] = {len(eintrag["bilder"]) - 1}
+                else:
+                    self.letztes_bild = eintrag["bilder"][
+                        min(eintrag["bilder_an"], default=0)]
+                    self._vorschau_zeigen(self.letztes_bild)
+            gezeigt = ["{} {} %".format(t["item_id"], t.get("score", "?"))
+                       for t in alle[:3]]
+            if len(alle) > 3:
+                gezeigt.append("+{}".format(len(alle) - 3))
+            # Das ⏱ bleibt, sobald **eine** der Ansichten vom Wächter kam –
+            # sonst verschwände es, nur weil man zuletzt selbst ausgelöst hat,
+            # und die Zeile behauptete, alles sei von Hand gewesen.
+            eintrag["auto"] = eintrag.get("auto") or self.auto_lauf
+            self._verlauf_ersetzen(0, "{}{}  ⟳{}".format(
+                "⏱ " if eintrag["auto"] else "", " · ".join(gezeigt),
+                eintrag["mal"]))
+            self.melden("Ansicht {} – {} Vorschläge zusammen".format(
+                eintrag["mal"], len(alle)))
+        else:
+            # Der Datensatz, der an dieser Verlaufszeile hängt: Mit ihm kommt
+            # man später hierher zurück. Die Aufnahme gehört dazu – ohne sie
+            # hinge beim Zurückspringen ein fremdes Bild neben dem
+            # Katalogbild, und ein nachträglich mitgespeichertes Foto zeigte
+            # die falsche Figur.
+            eintrag = {"kandidaten": alle, "index": 0, "ids": ids,
+                       "zeit": time.time(),
+                       "bilder": [self.letztes_bild]
+                       if self.letztes_bild is not None else [],
+                       "bilder_an": {0} if self.letztes_bild is not None
+                       else set(), "auto": self.auto_lauf}
+            vorher_gewuenscht = set()
+            # Hinterher will man sehen, was der Wächter von sich aus geholt
+            # hat und was man selbst ausgelöst hat – gerade um die
+            # Empfindlichkeit danach einzustellen.
+            self.melden(("⏱ " if self.auto_lauf else "")
+                        + " · ".join(gezeigt), True, eintrag)
+        self.eintrag = eintrag
+        self.bilder = eintrag.setdefault("bilder", [])
+        self.bilder_an = eintrag.setdefault("bilder_an", set())
+        self._ansichten_aufbauen()
+        # Bei einer Wiederholung bleibt es still und dunkel: Man hat die Figur
+        # eben erst gesehen, und ein Ton, der zweimal für dasselbe kommt,
+        # verliert genau die Bedeutung, für die er da ist.
+        #
+        # Der Ton gilt dem **ganzen Scan**, nicht nur dem gewählten Vorschlag:
+        # Bei Varianten liegt der Wunsch oft auf Platz zwei, und wer im Stream
+        # gerade nicht hersieht, bekäme genau den nie mit. Er sagt „schau
+        # hin"; welche Zeile gemeint ist, sagt danach das ☆ und der goldene
+        # Grund. Vor dem Aufbau der Liste, damit er sofort kommt.
+        # Bei weiteren Ansichten zählt nur, was **neu** hinzugekommen ist:
+        # Taucht der Wunsch erst in der dritten Ansicht auf, muss es klingen –
+        # war er schon in der ersten dabei, hat man ihn längst gehört.
+        neue_wuensche = [t for t in alle
+                         if _gewuenscht(t.get("_info") or {})
+                         and t["item_id"] not in vorher_gewuenscht]
+        if neue_wuensche and self.ton.get():
+            ton_spielen()
+        # Der frische Scan ist jetzt der Stand, auf dem wir stehen – die
+        # Markierung im Verlauf soll das zeigen, auch wenn man vorher
+        # zurückgesprungen war.
+        self.verlauf.selection_clear(0, "end")
+        self.verlauf.selection_set(0)
+        self.verlauf.see(0)
+        # Bei einer weiteren Ansicht bleibt stehen, was gewählt war – auch
+        # wenn die Sortierung sich geändert hat. Sonst risse eine Umdrehung
+        # der Scheibe genau den Treffer weg, auf den man gerade zielt, und
+        # der Klick auf „＋ Sammlung" legte etwas anderes an. Nur wenn der
+        # gewählte Vorschlag verschwunden ist, geht es auf den besten.
+        wohin = 0
+        if wiederholung and self.gewaehlt is not None:
+            wohin = next((i for i, t in enumerate(alle)
+                          if t is self.gewaehlt), 0)
+        self._liste_fuellen(alle, wohin,
+                            blinken=bool(neue_wuensche) or not wiederholung)
+
+    def _verlauf_ersetzen(self, i: int, text: str):
+        """Eine Verlaufszeile neu schreiben – Markierung bleibt, wo sie war."""
+        markiert = i in self.verlauf.curselection()
+        self.verlauf.delete(i)
+        self.verlauf.insert(i, time.strftime("%H:%M  ") + text)
+        if markiert:
+            self.verlauf.selection_set(i)
+        self._verlauf_sichern()
+
+    def _zeilen_schreiben(self, alle: list):
+        """Die Vorschläge in die Liste schreiben – ohne etwas auszuwählen.
+
+        Getrennt vom Auswählen, weil die Zeilen auch neu geschrieben werden,
+        wenn nur der Bestand nachgezogen wurde: Dann sollen die 🛒-Marken
+        stimmen, ohne dass Katalogbild und Preis noch einmal geholt werden.
+        """
+        self.kandidaten = alle
+        self.liste.delete(0, "end")
+        for i, t in enumerate(alle):
+            info = t.get("_info") or {}
+            eingeplant = _schon_da(info)
+            wunsch = _gewuenscht(info)
+            # Die Art nur nennen, wenn es keine Figur ist. Bei einer von Hand
+            # gesuchten Nummer stehen Set und Teil nebeneinander – ohne das
+            # Wort wüsste niemand, welche Zeile welche ist. Bei erkannten
+            # Vorschlägen sind es fast immer Figuren, da wäre es Balast.
+            art = {"set": " [Set]", "part": " [Teil]"}.get(t.get("item_type"), "")
+            # Beide Marken können zusammen auftreten: Man kann sich eine
+            # zweite ausdrücklich wünschen.
+            # Das zweite Zeichen sagt jetzt, **warum** die Zeile grün ist:
+            # ✔ in der Sammlung, 📦 in einem eigenen Set, 🛒 auf einer Liste.
+            marke = ("☆" if wunsch else " ") + _schon_da_marke(info)
+            # Getippte Zeilen tragen ein ✎ statt einer Zahl. Sie stehen in
+            # derselben Liste wie die erkannten, und dort wäre „100 %" die
+            # unehrlichste Zahl von allen – geraten hat da niemand.
+            quote = "  ✎  " if t.get("_getippt") \
+                else "{:>3} %".format(t.get("score", "?"))
+            # Aus wie vielen Ansichten dieselbe Figur kam. Das ist die
+            # verlässlichere Zahl als die Trefferquote: Zweimal aus
+            # verschiedenen Winkeln gefunden schlägt einmal knapp erkannt.
+            gesehen = t.get("_ansichten", 1)
+            name = (t.get("name") or "")[:44 if gesehen < 2 else 38]
+            if gesehen > 1:
+                name += "  ({}×)".format(gesehen)
+            self.liste.insert("end", "{} {}  {}{}  ·  {}".format(
+                marke, quote, t["item_id"], art, name))
+            # Die Fläche gilt immer nur für den **gewählten** Vorschlag.
+            # Steht die eingeplante – oder gewünschte – Figur auf Platz zwei,
+            # bei Varianten der Regelfall, sähe man davon nichts, ohne jede
+            # Zeile einzeln anzuklicken. Deshalb trägt die Zeile die Marke.
+            # „Schon da" färbt vor „Wunsch": Vor einem Doppelkauf zu warnen
+            # wiegt schwerer, und die Marken zeigen ohnehin beides.
+            if eingeplant:
+                self.liste.itemconfig(i, background="#d7f0dd",
+                                      selectbackground=RAHMEN_AN,
+                                      selectforeground="#ffffff")
+            elif wunsch:
+                self.liste.itemconfig(i, background=WUNSCH_ZEILE,
+                                      selectbackground=WUNSCH_AN,
+                                      selectforeground="#ffffff")
+
+    def _liste_fuellen(self, alle: list, index: int = 0,
+                       blinken: bool = True):
+        """Vorschläge zeigen und einen davon wählen – samt Bild und Preis.
+
+        Denselben Weg nehmen der frische Scan und der Rücksprung in den
+        Verlauf. Sonst sähe eine zurückgeholte Trefferliste anders aus als
+        dieselbe Liste zehn Minuten vorher, und der Unterschied wäre nichts
+        als eine zweite Stelle, die dasselbe halb macht.
+        """
+        self._zeilen_schreiben(alle)
+        index = min(max(index, 0), len(alle) - 1)
+        self.liste.selection_clear(0, "end")
+        self.liste.selection_set(index)
+        self.liste.see(index)
+        self.gewaehlt = alle[index]
+        # Auch das gehört zum Stand dieser Verlaufszeile – sonst führte ein
+        # Rücksprung auf die nachgetragene Nummer wieder zum erkannten
+        # Vorschlag zurück, den man ja gerade verworfen hat.
+        if self.eintrag is not None:
+            self.eintrag["index"] = index
+        self._treffer_zeigen(alle[index], blinken=blinken)
+        self._referenz_holen(alle[index])
+        self._preis_nachfragen(alle[index])
+
+    def _auswahl_geaendert(self, _ereignis=None):
+        gewaehlt = self.liste.curselection()
+        if not gewaehlt or not self.kandidaten:
+            return
+        treffer = self.kandidaten[gewaehlt[0]]
+        if treffer is self.gewaehlt:
+            return
+        self.gewaehlt = treffer
+        # Die gewählte Variante gehört zum Stand dieser Verlaufszeile: Wer
+        # später hierher zurückspringt, will die Zeile wiederfinden, die er
+        # ausgesucht hatte – nicht wieder den Vorschlag mit der höchsten
+        # Trefferquote, den er ja gerade verworfen hat.
+        if self.eintrag is not None:
+            self.eintrag["index"] = gewaehlt[0]
+        self._treffer_zeigen(treffer)
+        self._referenz_holen(treffer)
+        self._preis_nachfragen(treffer)
+
+    def _verlauf_geklickt(self, _ereignis=None):
+        """Zurück zu einem früheren Scan – mit allem, was dazugehörte.
+
+        Im Stream geht es schnell: Man scannt weiter, während der Verkäufer
+        redet, und merkt zwei Figuren später, dass die vorletzte doch auf die
+        Liste sollte. Bisher war sie unwiederbringlich weg – die Aufnahme
+        besonders, die es kein zweites Mal gibt.
+
+        Der Rücksprung ist ungefährlich, weil der Weg zurück derselbe ist:
+        Der aktuelle Scan steht ja selbst als oberste Zeile im Verlauf.
+        """
+        wahl = self.verlauf.curselection()
+        if not wahl:
+            return
+        eintrag = self.verlauf_daten[wahl[0]] \
+            if wahl[0] < len(self.verlauf_daten) else None
+        if eintrag is None:
+            self.melden("Zu dieser Zeile gibt es keinen Treffer – "
+                        "die blassen sind Buchungen und Meldungen.")
+            return
+        if eintrag is self.eintrag:
+            return                        # da stehen wir schon
+        self.eintrag = eintrag
+        # Die Aufnahme von damals gehört dazu: Sie steht links neben dem
+        # Katalogbild, sie wandert bei „📷 Foto mitspeichern" an den Artikel,
+        # und sie ist es, die in die Zwischenablage geht.
+        self.bilder = eintrag.setdefault("bilder", [])
+        self.bilder_an = eintrag.setdefault("bilder_an", set())
+        self.letztes_bild = self.bilder[min(self.bilder_an, default=0)] \
+            if self.bilder else None
+        if self.letztes_bild:
+            self._vorschau_zeigen(self.letztes_bild)
+            self.k_ablage.config(state="normal")
+        else:
+            self._vorschaubild = None
+            self.vorschau.config(image="", text="Aufnahme\nnicht mehr\nda",
+                                 foreground="#999", width=17, height=9)
+            self.k_ablage.config(state="disabled")
+        self._ansichten_aufbauen()
+        self._liste_fuellen(eintrag["kandidaten"], eintrag.get("index", 0))
+        self._bestand_auffrischen(eintrag["kandidaten"])
+        # Nach `_liste_fuellen`, nicht davor: Das schreibt selbst in die
+        # Statuszeile, und der Hinweis, dass man in der Vergangenheit steht,
+        # ist der wichtigere von beiden.
+        self.melden("↩ Stand von {} – Buchen legt diesen Treffer an.".format(
+            self.verlauf.get(wahl[0])[:5]))
+
+    def _bestand_auffrischen(self, alle: list):
+        """Beim Rücksprung „habt ihr schon" neu holen.
+
+        Der Datensatz hält fest, was vor zehn Minuten galt – und genau in
+        diesen zehn Minuten kann die Figur in der Sammlung gelandet sein,
+        womöglich durch den Klick, der direkt auf diesen Scan folgte. Wer
+        dann auf die alten Zahlen schaut, kauft ein zweites Mal; das ist die
+        eine Frage, für die es dieses Werkzeug gibt.
+
+        Nur die schnelle Auskunft aus der eigenen Datenbank – nach BrickLink
+        ist beim ersten Mal schon gefragt worden, und der Preis von damals
+        gilt noch.
+        """
+        frage = [{"item_id": t["item_id"],
+                  "item_type": t.get("item_type") or "minifig"} for t in alle]
+
+        def lauf():
+            neu = self.instanz.infos(frage)
+            if not neu:
+                return
+            for t in alle:
+                # Leere Felder überschreiben nichts: Die kurze Auskunft kennt
+                # weder `all_sets` noch die Preise von BrickLink, und die
+                # sollen beim Auffrischen nicht verschwinden.
+                frisch = {k: v for k, v
+                          in (neu.get(t["item_id"]) or {}).items()
+                          if v is not None}
+                if frisch:
+                    t["_info"] = {**(t.get("_info") or {}), **frisch}
+            self.post.put(("auffrischen", alle))
+        threading.Thread(target=lauf, daemon=True).start()
+
+    def _referenz_holen(self, treffer: dict):
+        """Das Katalogbild der gewählten Figur nachladen – im Hintergrund,
+        damit die Auswahl nicht darauf wartet."""
+        self.post.put(("fuer", (treffer, "referenz", None)))
+        adresse = treffer.get("img_url") or ""
+        if not adresse:
+            return
+
+        def lauf():
+            roh = self.instanz.katalogbild(adresse)
+            # Der Weiterleiter gibt JPEG – Tk will PNG.
+            self.post.put(("fuer", (treffer, "referenz",
+                                    als_png(roh) if roh else None)))
+        threading.Thread(target=lauf, daemon=True).start()
+
+    def _preis_nachfragen(self, treffer: dict):
+        """Bei BrickLink nachfragen – nur für den gerade Gewählten.
+
+        Für alle Kandidaten auf einmal wäre es eine Abfrage je Figur, und
+        das für Vorschläge, die man gar nicht will.
+        """
+        if treffer["item_id"].startswith(("fig-", "manuell-", "custom-")):
+            return
+        if treffer.get("_genauer"):
+            return                       # schon einmal gefragt
+        frage = [{"item_id": treffer["item_id"],
+                  "item_type": treffer.get("item_type") or "minifig"}]
+
+        def lauf():
+            self.post.put(("fuer", (treffer, "stand",
+                                    "Frage BrickLink nach dem Preis …")))
+            genauer = self.instanz.infos(frage, bei_bricklink=True).get(
+                treffer["item_id"])
+            treffer["_genauer"] = True
+            zusatz = dict(genauer or {})
+            # Die Sets im selben Durchgang: Es ist dieselbe Wartezeit, und
+            # die Antwort liegt auf der Instanz ohnehin im Speicher.
+            if (treffer.get("item_type") or "minifig") == "minifig" \
+                    and not zusatz.get("all_sets"):
+                sets = self.instanz.sets_der_figur(treffer["item_id"])
+                if sets:
+                    zusatz["all_sets"] = sets
+            if zusatz:
+                treffer["_info"] = {**(treffer.get("_info") or {}), **zusatz}
+                self.post.put(("fuer", (treffer, "treffer", treffer)))
+            else:
+                self.post.put(("fuer", (treffer, "stand",
+                                        "BrickLink hat keinen Preis.")))
+        threading.Thread(target=lauf, daemon=True).start()
+
+    def _treffer_leeren(self):
+        """Alles vom vorigen Treffer wegräumen – ohne die eigene Aufnahme.
+
+        Die bleibt bewusst stehen: Man will sehen, **was** man geschickt hat,
+        wenn nichts erkannt wurde. Alles andere gehört zur Figur von eben und
+        wäre jetzt eine Falschaussage – vor allem die drei Knöpfe.
+        """
+        self.treffer = None
+        self.gewaehlt = None
+        # Der Verlauf behält seine Zeilen – nur stehen wir auf keiner mehr.
+        # Die Markierung geht mit, sonst leuchtete eine Zeile, deren Stand
+        # gerade weggeräumt wurde.
+        self.eintrag = None
+        self.verlauf.selection_clear(0, "end")
+        self.kandidaten = []
+        self.liste.delete(0, "end")
+        self.name.config(text="—")
+        for label in (self.unter, self.besitz, self.woanders, self.setliste):
+            label.config(text="")
+        self._referenzbild = None
+        self._referenz_roh = None
+        self.referenz.config(image="", text="—", foreground="#999",
+                             width=17, height=9)
+        self._blinken_beenden(self.rahmen_aus)
+        for k in (self.k_sammlung, self.k_merken, self.k_liste):
+            k.config(state="disabled")
+
+    def _treffer_zeigen(self, treffer: dict, still: bool = False,
+                        blinken: bool = True):
+        # `still` heißt: nur neu zeichnen, nichts melden. Beim Auffrischen
+        # nach einem Rücksprung stünde sonst „gewählt“ in der Statuszeile und
+        # überschriebe den Hinweis, dass man in der Vergangenheit steht.
+        #
+        # Derselbe Treffer kommt zweimal: einmal sofort, einmal wenn der
+        # Preis von BrickLink da ist. In den Verlauf gehört er nur einmal.
+        schon_da = self.treffer is treffer
+        self.treffer = treffer
+        info = treffer.get("_info") or {}
+        self.name.config(text=treffer.get("name") or treffer["item_id"])
+        teile = [treffer["item_id"],
+                 "von Hand eingetragen" if treffer.get("_getippt")
+                 else f"{treffer.get('score', '?')} % sicher"]
+        if info.get("year"):
+            teile.append(str(info["year"]))
+        for label, schluessel in (("Ø neu", "new"), ("Ø gebr.", "used")):
+            wert = info.get(schluessel)
+            if wert is not None:
+                teile.append(f"{label} {wert:.2f} €")
+        self.unter.config(text="  ·  ".join(teile))
+        self.besitz.config(**_besitz_zeile(info))
+        # „Habe ich das schon?" hat mehr als eine Antwort: Wunschliste,
+        # Einkaufsliste und die eigenen Sets zählen genauso. Alles davon
+        # steht längst in der Antwort der App – es stand nur nirgends.
+        self.woanders.config(text=_woanders(info))
+        self.setliste.config(text=_alle_sets(info))
+        grund = RAHMEN_AN if _schon_da(info) else self.rahmen_aus
+        self._blinken_beenden(grund)
+        # Blinken nur beim **ersten** Zeigen: Derselbe Treffer kommt ein
+        # zweites Mal, wenn der Preis von BrickLink eintrifft, und ein Wunsch,
+        # der zweimal hintereinander losblinkt, wird zum Flackern.
+        if _gewuenscht(info) and not schon_da and not still and blinken:
+            self._wunsch_blinken(grund)
+        for k in (self.k_sammlung, self.k_merken, self.k_liste):
+            k.config(state="normal")
+        if still:
+            return
+        if schon_da:
+            self.melden("Preis von BrickLink da.")
+        else:
+            self.melden(f"{treffer['item_id']} gewählt")
+
+    def _zustand_merken(self, *_egal):
+        """Auf einem Flohmarkt ist fast alles gebraucht – die einmal
+        getroffene Wahl soll den nächsten Start überdauern."""
+        self.daten["zustand"] = self.zustand.get()
+        schreiben(self.daten)
+
+    def _preis_lesen(self):
+        """Gibt (in Ordnung, Wert) zurück. Leer ist erlaubt – dann kommt
+        `None`, und die App trägt keinen Preis ein."""
+        roh = self.preisfeld.get().strip().replace(",", ".")
+        if not roh:
+            return True, None
+        try:
+            wert = float(roh)
+        except ValueError:
+            return False, None
+        if wert < 0:
+            return False, None
+        return True, round(wert, 2)
+
+    def _tun(self, arbeit, was: str):
+        if not self.treffer:
+            return
+        treffer = self.treffer
+        # Alle ausgesuchten Ansichten – auf einer Drehscheibe können das
+        # mehrere sein, und welche taugen, hat der Anwender entschieden.
+        bilder = [self.bilder[i] for i in sorted(self.bilder_an)
+                  if 0 <= i < len(self.bilder)] if self.mitschicken.get() \
+            else []
+
+        def lauf():
+            try:
+                ergebnis = arbeit(treffer)
+            except Fehler as e:
+                self.post.put(("verlauf", f"{was} misslungen: {e}"))
+                return
+            # Das Foto hängt am **Artikel**, nicht am Eintrag. Wer erst
+            # „＋ Sammlung" und dann „🛒 drauf" drückt, bekam bisher zweimal
+            # dasselbe Bild in die Galerie – der Kommentar an dieser Stelle
+            # behauptete das Gegenteil, der Code hängte es trotzdem jedes Mal
+            # an. Einmal je Artikel und Aufnahme genügt; eine **neue**
+            # Aufnahme derselben Figur kommt sehr wohl dazu, denn dann hat man
+            # bewusst noch einmal fotografiert.
+            neu = doppelt = 0
+            fehler = ""
+            for bild in bilder:
+                merkmal = (treffer["item_id"], hashlib.sha1(bild).digest())
+                if merkmal in self.fotos:
+                    doppelt += 1
+                    continue
+                try:
+                    self.instanz.foto_anhaengen(treffer, bild)
+                    self.fotos.add(merkmal)
+                    neu += 1
+                except Fehler as e:
+                    fehler = str(e)
+                    break
+            zusatz = ""
+            if neu == 1:
+                zusatz = " (mit Foto)"
+            elif neu > 1:
+                zusatz = " (mit {} Fotos)".format(neu)
+            elif doppelt:
+                zusatz = " (Foto hängt schon dran)"
+            if fehler:
+                zusatz += " (Foto misslungen: {})".format(fehler)
+            self.post.put(("verlauf",
+                           f"{treffer['item_id']} – {ergebnis}{zusatz}"))
+            self.post.put(("preis-leeren", None))
+        threading.Thread(target=lauf, daemon=True).start()
+
+    def in_ablage(self):
+        """Den anderen Weg gehen: Bild in die Zwischenablage, Rest in der App."""
+        if not self.letztes_bild:
+            return
+        if in_zwischenablage(self.letztes_bild):
+            self.melden("In der Zwischenablage – in der App ins Scannen-Feld "
+                        "klicken und ⌘V drücken.", True)
+        else:
+            self.melden("Zwischenablage hat nicht mitgespielt.")
+
+    def zur_sammlung(self):
+        gut, preis = self._preis_lesen()
+        if not gut:
+            self.melden("Einkauf bitte als Zahl, z. B. 4,50")
+            return
+        zustand = self.zustand.get()
+        self._tun(lambda t: self.instanz.in_sammlung(t, zustand, preis),
+                  "Sammlung")
+
+    def merken(self):
+        self._tun(self.instanz.auf_wunschliste, "Merken")
+
+    def auf_liste(self):
+        passend = [l for l in self.listen
+                   if l["name"] == self.listenwahl.get()]
+        if not passend:
+            self.melden("Keine Liste gewählt.")
+            return
+        gut, preis = self._preis_lesen()
+        if not gut:
+            self.melden("Einkauf bitte als Zahl, z. B. 4,50")
+            return
+        nummer = passend[0]["id"]
+        zustand = self.zustand.get()
+        self._tun(lambda t: self.instanz.auf_liste(nummer, t, zustand, preis),
+                  "Liste")
+
+
+def main():
+    # Apples mitgeliefertes Tk 8.5 zeichnet auf heutigem macOS nur ein weißes
+    # Fenster und kann kein PNG. Lieber offen sagen, was fehlt, als den
+    # Anwender vor eine leere Fläche setzen.
+    if tk.TkVersion < 8.6:
+        print("Dieses Python bringt Tk %s mit – zu alt.\n"
+              "Damit gäbe es nur ein weißes Fenster.\n"
+              "Nehmt ein neueres Python, etwa aus Homebrew:\n"
+              "  brew install python-tk\n"
+              "oder startet über start.sh, das sucht selbst eines."
+              % tk.TkVersion, file=sys.stderr)
+        raise SystemExit(2)
+    # Was ein früherer Absturz an Ausschnitten liegen ließ, kommt jetzt weg.
+    reste_aufraeumen()
+    wurzel = tk.Tk()
+    app = LiveScanner(wurzel)
+    if app.instanz.token:
+        app.listen_laden()
+        app.melden("Bereit – Rahmen ziehen und senden.")
+    wurzel.mainloop()
+
+
+if __name__ == "__main__":
+    main()

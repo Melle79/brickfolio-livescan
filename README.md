@@ -1,0 +1,694 @@
+# Brickfolio Live-Scanner
+
+Ein kleines Fenster für den Mac, das über allem liegt. Rahmen um die Figur
+ziehen, fertig – der Treffer steht mit Nummer, Ø-Preisen und „habt ihr
+schon" da, und auf Knopfdruck landet er in der Sammlung, auf der
+Wunschliste oder auf einer Einkaufsliste.
+
+Gedacht für Auktions-Streams: eBay Live läuft im einen Fenster, dieses
+liegt daneben. Statt Bildschirmfoto machen, Finder öffnen, ins Scannen-Feld
+ziehen – ein Klick, ein Rahmen.
+
+
+
+## Es gehört nicht zur App
+
+Brickfolio bleibt unberührt. Dieses Programm benutzt nur die **Schnittstelle**
+der App, genau wie es der Browser tut:
+
+| Weg | wofür |
+|---|---|
+| `POST /api/login` | einmal anmelden, Token merken |
+| `POST /api/scan` | den Ausschnitt erkennen lassen |
+| `POST /api/suggest_info` | Jahr, Ø-Preise, „wie oft habt ihr das schon" |
+| `POST /api/collection` | ＋ Sammlung |
+| `POST /api/wanted` | ☆ Merken |
+| `GET/POST /api/lists…` | 🛒 auf eine Einkaufsliste |
+
+Ändert sich an der App nichts, ändert sich hier auch nichts.
+
+## Starten
+
+Am bequemsten über **„Brickfolio Live-Scanner"** auf dem Schreibtisch. Sonst:
+
+```bash
+sh /Users/nutzer/dev/brickfolio-livescan/start.sh
+```
+
+Es braucht **keine** Fremdbibliotheken – aber ein Python mit **Tk 8.6 oder
+neuer**.
+
+> ⚠️ **Nicht das Python aus macOS nehmen.** `/usr/bin/python3` bringt
+> **Tk 8.5** mit, Apples altes und auf heutigem macOS kaputtes Fenster-Werk:
+> Man bekommt nur ein **weißes Fenster**. Und PNG kann es auch nicht (das kam
+> erst mit 8.6), also gäbe es weder Vorschau noch Bereichsauswahl.
+>
+> `start.sh` probiert deshalb der Reihe nach durch und nimmt das erste
+> taugliche – auf diesem Rechner das aus Homebrew (Tk 9.0). Startet ihr
+> `livescan.py` direkt mit einem zu alten Python, sagt es das und beendet
+> sich, statt euch vor eine leere Fläche zu setzen.
+
+Beim ersten Start fragt es nach Adresse, Benutzername und Passwort. Der
+Zugang landet in `~/.brickfolio-livescan.json`, nur für euch lesbar (0600).
+Gespeichert wird der **Token**, nicht das Passwort.
+
+> **Berechtigung.** Beim ersten Bildschirmfoto fragt macOS nach
+> *Bildschirmaufnahme* – und zwar für das Programm, aus dem ihr das hier
+> startet, meist Terminal. Ohne sie kommt ein schwarzes Bild. Zu finden
+> unter *Systemeinstellungen → Datenschutz & Sicherheit →
+> Bildschirmaufnahme*.
+
+## Bedienen
+
+**▣ Rahmen ziehen und senden** – der eine Knopf, um den es geht. Das Fenster
+verschwindet kurz, ihr zieht mit der Maus einen Rahmen um die Figur, und
+genau dieser Ausschnitt geht zur Erkennung. Das ist macOS' eigene Auswahl:
+Maße stehen dabei, Leertaste verschiebt den Rahmen, **Esc** bricht ab.
+Die **Eingabetaste** löst dasselbe aus.
+
+**🎯 Bereich merken** und **📷 Aus Bereich** – für Serien aus demselben
+Fleck. Einmal markieren, danach genügt ein Klick ohne Ziehen. Praktisch,
+wenn der Verkäufer die Figuren immer an derselben Stelle hochhält. Ist ein
+Bereich gemerkt, könnt ihr den Scanner auch [von selbst auslösen
+lassen](#von-selbst-auslösen).
+
+## Wenn mehrere Versionen erkannt werden
+
+Die Erkennung liefert selten genau eine Antwort – meist eine **Liste mit
+Trefferquoten**. Gerade bei Varianten derselben Figur (anderer Umhang, andere
+Beine, andere Kopfbedruckung) liegt die richtige oft auf Platz zwei.
+
+Deshalb stehen alle Vorschläge untereinander:
+
+```
+ 77 %  sw0417   ·  Mace Windu (Cape)
+ 71 %  sw0417a  ·  Mace Windu - Dark Purple Robes
+ 64 %  sw0056   ·  Mace Windu (Ep. 2)
+```
+
+Der beste ist vorausgewählt; ein Klick auf eine andere Zeile wechselt, und
+Preise, „habt ihr schon" und die drei Knöpfe beziehen sich ab dann auf
+**diese** Figur. Bei BrickLink nachgefragt wird nur für die gerade gewählte
+– sonst wären es Abfragen für Vorschläge, die man gar nicht will.
+
+**Ein 🛒 vor einer Zeile** und ihr blasser grüner Grund heißen: *diese*
+Variante habt ihr schon – in der Sammlung, auf einer Liste oder in einem
+eurer Sets. Ein **☆** und ein goldener Grund heißen das Gegenteil: Die steht
+auf eurer Wunschliste. Ohne die Marken sähe man das erst nach dem Anklicken,
+und gerade bei Varianten steht die richtige oft nicht obenauf:
+
+```
+     83 %  sw1158   ·  Boba Fett - Repainted Beskar Armor
+ 🛒  61 %  sw0863   ·  Vice Admiral Holdo
+☆    58 %  sw0417a  ·  Mace Windu - Dark Purple Robes
+```
+
+Beide Marken zusammen (**☆🛒**) gibt es auch – wer sich ausdrücklich ein
+zweites Exemplar wünscht.
+
+## Bedienen
+
+Darüber stehen **zwei Bilder nebeneinander**: links eure Aufnahme, rechts
+das **Katalogbild von BrickLink** zur gewählten Figur. So seht ihr auf einen
+Blick, ob der Vorschlag passt – bei zwei Varianten mit 77 % und 71 % sagt
+die Zahl allein wenig, das Bild dagegen sofort. Wechselt ihr die Zeile in
+der Liste, wechselt auch das Katalogbild.
+
+Bei eigenen Figuren gibt es keins; dann steht dort „kein Katalogbild" statt
+einer leeren Fläche.
+
+**Ein Klick auf ein Bild zeigt es groß** – bis zu 1100 px statt der 250 in der
+Übersicht, mittig auf dem Bildschirm. Bei zwei Varianten derselben Figur
+hängt die Entscheidung an der Bedruckung, und die sieht man im Daumennagel
+nicht.
+
+Es ist ein rahmenloses Popup, kein Fenster: **Der nächste Klick schließt es**,
+egal ob darauf oder daneben, und **Esc** genauso. Ihr müsst also nichts
+wegklicken, bevor es weitergeht — im Stream zählt jede Sekunde.
+
+**Wird die ganze Fläche hinter beiden Bildern grün**, heißt das schlicht:
+**Habt ihr schon.** Drei Gründe lösen es aus – die Figur steht in der
+Sammlung, sie liegt auf einer offenen Einkaufsliste, oder sie steckt in einem
+Set, das bei euch daheim steht. Im Stream schaut man auf das Bild, nicht auf
+die Zeile darunter, und eine Farbfläche sieht man aus dem Augenwinkel,
+während der Verkäufer schon weiterredet.
+
+Bewusst **nicht** grün wird sie bei der Wunschliste: Ein Wunsch ist ein Grund
+zu kaufen, kein Grund es zu lassen. Wäre die Fläche dort auch grün, hieße sie
+zweierlei und damit nichts.
+
+### Steht sie auf der Wunschliste, blinkt es
+
+Der Wunsch bekommt deshalb ein **eigenes** Signal, und ein lauteres: Die
+Fläche hinter den Bildern **blinkt zwei Sekunden lang golden**, und es
+**klingt** dazu. Grün darf man übersehen — das schlimmste ist ein Doppelkauf.
+Einen Wunsch zu verpassen ist teurer: Er ist der Grund, aus dem ihr überhaupt
+zuschaut, und er kommt vielleicht monatelang nicht wieder.
+
+Geblinkt wird gegen den jeweiligen Grund, nicht gegen Grau. Steht die Figur
+auf der Wunschliste **und** in einem eurer Sets, bleibt das Grün also
+sichtbar und das Gold läuft darüber — beide Nachrichten bleiben lesbar.
+
+**Der Ton gilt dem ganzen Scan, nicht nur dem obersten Vorschlag.** Bei
+Varianten liegt der Wunsch oft auf Platz zwei, und wer im Stream gerade nicht
+hersieht, bekäme genau den nie mit. Der Ton sagt „schau hin"; welche Zeile
+gemeint ist, sagt danach das **☆** davor und ihr goldener Grund:
+
+```
+     91 %  sw0100   ·  Nicht gewünscht
+☆    64 %  sw0101   ·  Der Wunsch
+☆🛒  85 %  sw0300   ·  habt ihr schon – und wollt noch eins
+```
+
+Geblinkt wird für den **gewählten** Vorschlag. Klickt ihr die goldene Zeile
+an, blinkt es auch für sie.
+
+**🔔 Ton bei Wunschliste** neben dem Foto-Haken schaltet den Ton ab; das
+Blinken bleibt. Beim Einschalten spielt er einmal, damit ihr die Lautstärke
+hört, bevor es darauf ankommt.
+
+### Habt ihr das schon?
+
+Unter dem Namen stehen drei Zeilen, und sie beantworten drei verschiedene
+Fragen:
+
+```
+✔ 2× in eurer Sammlung
+☆ auf der Wunschliste   🛒 auf »Flohmarkt 02.08.«   🧩 steckt in eurem Set 75168-1 (Yoda's Jedi Starfighter)
+📦 aus 4 Sets: 75233-1 Droid Gunship,  75142-1 Homing Spider Droid,  75255-1 Yoda,  +1 weitere
+```
+
+Die **erste** Zeile ist der Bestand – grün, wenn ihr die Figur habt, sonst
+gelb. Die **zweite** sagt, ob ihr sie euch schon irgendwo vorgemerkt habt:
+Wunschliste, offene Einkaufslisten (mit Namen) und die Sets aus **eurer**
+Sammlung, in denen sie steckt. Die **dritte** ist der Katalog – aus welchen
+Sets die Figur überhaupt stammt.
+
+Das ist der Unterschied, auf den es beim Mitbieten ankommt: Zeile 2 ist euer
+Bestand, Zeile 3 ist Allgemeinwissen. Eine Figur, die schon auf einer Liste
+liegt, kauft man sonst zum zweiten Mal.
+
+Zeile 1 und 2 stehen sofort da; Zeile 3 kommt mit dem Preis nach ein bis zwei
+Sekunden. Leer bleibt eine Zeile, wenn es nichts zu sagen gibt.
+
+**Auf einem kleinen Bildschirm scrollt die Karte.** Reicht die Höhe nicht,
+erscheint rechts eine Bildlaufleiste, und das Mausrad schiebt den Inhalt –
+über der Trefferliste und über dem Verlauf scrollen dagegen diese selbst.
+Ist Platz übrig, verschwindet die Leiste, und der Verlauf unten wächst wie
+gehabt mit.
+
+> Früher stand hier eine Mindesthöhe in Höhe der ganzen Karte. Sie sollte
+> verhindern, dass unten etwas heraushängt – auf einem kleineren Bildschirm
+> bewirkte sie das Gegenteil: Das Fenster ließ sich nicht kleiner ziehen als
+> der Schirm hoch ist, der untere Teil blieb unerreichbar, und scrollen ging
+> nicht. Die Mindesthöhe ist jetzt 300 px.
+
+**Zieht das Fenster breit** – die Zeilen brechen dort um, wo das Fenster
+endet, nicht an einer festen Marke. Bei einer Figur aus dreißig Sets stehen
+trotzdem nicht alle da: Zeile 2 zeigt vier eurer Sets, Zeile 3 acht aus dem
+Katalog, dahinter jeweils „und N weitere".
+
+**Zustand und Einkauf** stehen darüber und gelten für „＋ Sammlung" und
+„🛒 drauf" – die Wunschliste kennt beides nicht und lässt es liegen:
+
+```
+Zustand:  (•) Gebraucht   ( ) Neu       Einkauf: [ 7,00 ] €
+```
+
+Der Preis darf leer bleiben, dann trägt die App keinen ein. Komma oder Punkt
+ist egal. **Nach jedem Anlegen wird das Preisfeld geleert** – sonst erbte die
+nächste Figur stumm den Preis der vorigen. Der **Zustand bleibt dagegen
+stehen** und überdauert auch den Neustart: Auf einem Flohmarkt ist fast alles
+gebraucht.
+
+Die drei Knöpfe darunter tun genau das, was die Trefferkarte in der App
+auch tut.
+
+**Der Verlauf unten** hält fest, was war – mit **Nummern**, nicht nur mit
+Anzahlen:
+
+```
+22:40  sw0417 77 % · sw0056 64 %
+22:37  sw0515 81 %
+22:30  sw0413 – auf der Liste (mit Foto)
+```
+
+So sieht man hinterher, welche Figur wann durchgelaufen ist. Ab vier
+Vorschlägen stehen die drei besten da und dahinter, wie viele noch kamen.
+
+**Mehrere Ansichten derselben Figur werden zusammengefasst** — dazu unten
+mehr:
+
+```
+22:41  sw0417 79 % · sw0056 55 % · +1  ⟳3
+22:37  sw0515 81 %
+```
+
+Das **⟳3** heißt: drei Ansichten, eine Figur. Zusammengefasst wird nur, was
+**direkt** aufeinander folgt und sich in den Vorschlägen überschneidet. Kommt
+etwas ganz anderes dazwischen oder bucht ihr, fängt die nächste Begegnung eine
+eigene Zeile an — sonst verschwände, dass ihr sie inzwischen gekauft habt.
+
+**Eure eigene Aufnahme zählt mit.** Wenn der Wächter eine Figur nur mäßig
+erkannt hat und ihr von Hand nachhelft, gehört das zur selben Figur und
+landet in derselben Zeile. Dafür ist mehr Zeit als beim Wächter: Der nimmt
+25 Sekunden, von Hand sind es drei Minuten — Fenster weg, Rahmen ziehen,
+überlegen, das dauert. Ein **⏱** bleibt an der Zeile stehen, sobald eine der
+Ansichten vom Wächter kam.
+
+**Die letzten 20 Zeilen überstehen das Schließen.** Beim nächsten Start stehen
+sie unter einem Strich:
+
+```
+17:02  sw0332 74 %
+── vorige Sitzung vom 08.08. ──
+22:41  sw0417 79 % · sw0417a 70 %  ×3
+```
+
+Der Strich ist kein Zierrat: In den Zeilen steht nur die Uhrzeit, und ohne ihn
+sähe „22:41" von gestern aus wie von eben. Der Rücksprung funktioniert auch
+dort — **nur die Aufnahme fehlt**, denn ein Bildschirmausschnitt hat auf der
+Platte nichts verloren. Statt ihrer steht „Aufnahme nicht mehr da", und
+„📋 Zwischenablage" ist für diese Zeilen aus.
+
+### Zurückspringen
+
+**Ein Klick auf eine Verlaufszeile holt den ganzen Stand von damals zurück** –
+die Trefferliste, die Variante, die ihr ausgesucht hattet, und die Aufnahme.
+Im Stream geht es schnell: Man scannt weiter, während der Verkäufer redet,
+und merkt zwei Figuren später, dass die vorletzte doch auf die Liste sollte.
+Bisher war sie weg, die Aufnahme besonders – die gibt es kein zweites Mal.
+
+Danach tun die drei Knöpfe genau das, was sie damals getan hätten, und
+„📷 Foto mitspeichern" hängt **die Aufnahme von damals** an den Artikel, nicht
+die letzte. In der Statuszeile steht dabei, wo ihr seid:
+
+```
+↩ Stand von 22:37 – Buchen legt diesen Treffer an.
+```
+
+Der Weg zurück ist derselbe: Der aktuelle Scan steht ja selbst als oberste
+Zeile im Verlauf. Und **„habt ihr schon" wird frisch geholt** – zwischen dem
+Scan und dem Rücksprung kann die Figur in der Sammlung gelandet sein,
+womöglich durch den Klick direkt danach. Auf alte Zahlen zu schauen, hieße
+sie ein zweites Mal zu kaufen.
+
+**Blasse Zeilen führen nirgendwohin** – das sind Buchungen, Fehler und
+angelegte Listen, keine Scans. Und der Verlauf reicht 200 Zeilen weit, die
+**Aufnahmen** aber nur die letzten 30: Ein Ausschnitt wiegt schnell ein halbes
+Megabyte, und 200 davon im Speicher zu halten wäre ein schlechter Tausch für
+Zeilen, zu denen niemand mehr zurückspringt. Ältere zeigen die Karte dann
+ohne das Bild.
+
+**↻ neben der Listenauswahl** holt die Einkaufslisten neu – wer in der App
+eine anlegt, bekommt sie hier ohne Neustart. Die gerade gewählte Liste
+bleibt dabei stehen, sofern es sie noch gibt: Sonst spränge die Auswahl
+mitten im Abarbeiten auf eine andere.
+
+**＋ Liste** legt eine neue an, ohne dass ihr in die App wechseln müsst. Genau
+das ist im Stream der Engpass: Man kauft bei jemand Neuem, hat keine Liste
+dafür, und bis eine angelegt ist, ist der Artikel weg. Im Namensfeld steht
+schon das heutige Datum, so wie eure Listen ohnehin heißen („Flohmarkt 04.08.") –
+davor nur noch den Verkäufer tippen. Die neue Liste ist danach gleich
+ausgewählt.
+
+**📷 Foto mitspeichern** (Haken, standardmäßig an) – landet der Treffer in
+Sammlung, Wunschliste oder auf einer Liste, wird der Ausschnitt zusätzlich als
+**eigenes Foto** an den Artikel gehängt. Das ist dieselbe Funktion wie das
+Kästchen über den Scan-Treffern in der App: Das Katalogbild bleibt, euer Foto
+kommt in der Galerie daneben.
+
+**Einmal je Artikel und Aufnahme, nicht je Buchung.** Wer dieselbe Figur erst
+in die Sammlung und dann auf eine Liste legt, bekam sonst zweimal dasselbe
+Bild in die Galerie. Im Verlauf steht dann „(Foto hängt schon dran)". Eine
+**neue** Aufnahme derselben Figur kommt sehr wohl dazu – dann habt ihr ja
+bewusst noch einmal fotografiert.
+
+### Bei mehreren Ansichten sucht ihr aus
+
+Kam die Figur aus mehreren Winkeln, stehen alle Aufnahmen als Daumennägel
+unter den Bildern:
+
+```
+✓ wird angehängt (2 von 3):
+ [ 1 ]  [✓2 ]  [✓3 ]
+```
+
+**Grüner Rand und ✓ in der Ecke sind zusammen *eine* Markierung, nicht zwei:**
+dieses Bild wandert beim Buchen in die Galerie. Das Häkchen liegt über dem
+Bild, weil eine Randfarbe allein in einer Reihe aus sechs Daumennägeln
+untergeht – im Stream schaut man nicht zweimal hin. Darüber steht in Worten,
+wie viele es gerade sind.
+
+Ein Klick zeigt die Ansicht groß **und** schaltet sie an oder ab – zwei Dinge
+auf einen Klick, weil jeder zusätzliche Handgriff einer zu viel ist. Mehrere
+dürfen es sein, keines auch; dann kommt kein Foto mit.
+
+Es werden **sechs** Aufnahmen je Figur gehalten – so viele, wie nebeneinander
+passen. Kommt eine siebte, fliegt die älteste **nicht ausgesuchte** heraus;
+was ihr angehakt habt, bleibt.
+
+Vorgewählt ist die Ansicht, in der die oberste Figur am deutlichsten zu sehen
+war – aus ihr stammt die beste Trefferquote. Welche wirklich die schönste ist,
+sieht man selbst; der Rechner nicht.
+
+Im Verlauf steht danach „(mit 2 Fotos)". Bei nur einer Aufnahme bleibt die
+Reihe weg – sie wäre eine Auswahl ohne Wahl.
+
+## Der andere Weg: in der App weitermachen
+
+Wer den gewohnten Ablauf der App lieber mag, nimmt **📋 Bild in die
+Zwischenablage**. Danach in der App ins Scannen-Feld klicken und **⌘V** –
+von da an läuft alles wie immer, mit allen Knöpfen, dem Kästchen fürs eigene
+Foto und der Reihum-Suche bei mehreren Figuren.
+
+Dafür braucht die App nichts Neues zu können: Einfügen mit ⌘V beherrscht ihr
+Scannen-Feld ohnehin. Das Werkzeug spart euch nur das Bildschirmfoto, den
+Finder und das Ziehen.
+
+## Von selbst auslösen
+
+**⏱ Von selbst, wenn sich im Bereich etwas tut** – der Haken unter den
+Bereichsknöpfen. Ist er gesetzt, schaut der Scanner dem gemerkten Bereich zu
+und schickt den Ausschnitt, sobald dort eine neue Figur hochgehalten wird.
+Ihr müsst nichts mehr drücken.
+
+Das ist nicht nur bequemer, es trifft auch besser: Ausgelöst wird erst, wenn
+das Bild **still steht**. Von Hand drückt man, wenn man die Figur sieht – und
+das ist oft, während sie noch bewegt wird. Bewegungsunschärfe kostet mehr
+Treffer als schlechtes Licht.
+
+```
+⏱ still  ·  Bewegung 0.4  ·  3 Anfragen in der Minute
+```
+
+Diese Zeile sagt jederzeit, was der Wächter sieht. **Empfindlichkeit** daneben
+stellt ein, ab wann eine Änderung eine ist – ein Bildschirmabzug ist
+pixelgenau, ein Videobild rauscht immer ein wenig. Steht in der Zeile dauernd
+Bewegung, obwohl nichts passiert: eine Stufe unempfindlicher. Reagiert er auf
+neue Figuren nicht: eine Stufe empfindlicher.
+
+Im Verlauf tragen die selbst geholten Zeilen ein **⏱** vorneweg – so seht ihr
+hinterher, was der Wächter getan hat und was ihr selbst ausgelöst habt.
+
+> **Das Fenster darf nicht über dem Bereich liegen.** Es wird beim
+> automatischen Auslösen nicht weggeblendet – sonst flackerte es alle paar
+> Sekunden –, und dann fotografierte der Scanner sich selbst. Er prüft das
+> beim Einschalten und sagt es, statt euch eine Reihe sinnloser Erkennungen
+> zu bescheren.
+
+**Gebucht wird nie von selbst.** In Sammlung, Wunschliste oder auf eine Liste
+kommt nur, was ihr anklickt. Der Wächter nimmt euch das Drücken ab, nicht das
+Entscheiden.
+
+## Es überschwemmt die Erkennung nicht
+
+**Ein Auslöser = eine Anfrage**, auch mit Automatik. Die Erkennung dahinter
+(Brickognize) wird kostenlos bereitgestellt, und ein Videostream hätte 25
+Bilder je Sekunde, von denen 24 dasselbe zeigen. Eure Instanz bremst
+zusätzlich bei 40 Erkennungen je Minute.
+
+Deshalb verlässt beim Zuschauen **kein einziges Bild diesen Rechner**.
+Verglichen wird hier: Der Ausschnitt wird auf 24 × 24 Punkte eingedampft und
+mit dem vorigen verglichen. Erst wenn sich etwas geändert hat, das Bild
+danach still steht und nicht dasselbe zeigt wie beim letzten Mal, geht eine
+Anfrage hinaus – höchstens zwölf je Minute und nie zwei binnen drei Sekunden.
+Das sind weniger, als ein Mensch auslöst, der im Zweifel zweimal drückt.
+
+## Nummer von Hand nachtragen
+
+Unter der Trefferliste steht immer ein Feld:
+
+```
+✎ Nr. nachtragen: [ sw0402 ]  [Suchen]   z. B. sw0402, 75192, 3001
+```
+
+Das reicht oft schneller zum Ziel als ein zweiter Versuch — die Nummer wird in
+vielen Streams angesagt oder eingeblendet. Danach ist alles wie bei einem
+erkannten Treffer: Katalogbild, Preise, „habt ihr schon", die drei Knöpfe.
+Auch euer Ausschnitt bleibt stehen, das mitgespeicherte Foto hängt also an der
+richtigen Figur.
+
+**Es kommt zu den Vorschlägen dazu, es ersetzt sie nicht.** Der häufigere Fall
+ist nämlich nicht „gar nichts erkannt", sondern „etwas erkannt, aber das
+Falsche": Steht die Figur auf einem runden Ständer, erkennt die Erkennung gern
+den Ständer.
+
+```
+     62 %  11833 [Teil]  ·  Plate, Round 4 x 4 with 2 x 2 Round Open Center
+     59 %  60474 [Teil]  ·  Plate, Round 4 x 4 with Hole
+ ✎         sw0011        ·  Chewbacca
+```
+
+Die nachgetragene Zeile ist gleich ausgewählt und trägt ein **✎** statt einer
+Trefferquote — geraten hat da ja niemand. Die Vorschläge bleiben stehen, falls
+ihr euch vertippt habt, und im Verlauf steht eine eigene Zeile, die zu genau
+diesem Stand zurückführt.
+
+Das Feld stand früher **nur** da, wenn gar nichts erkannt wurde. Solange
+nichts erkannt wird, springt der Eingabestrich weiterhin von selbst hinein —
+außer der Wächter hat ausgelöst, denn dann tippt ihr vielleicht gerade einen
+Preis.
+
+**Geraten wird nicht.** `3001` ist bei BrickLink sowohl das Set *Propeller
+Buggy* als auch der Stein *2 × 4*. Deshalb werden Figur, Set und Teil
+nachgeschlagen und alle Treffer zur Auswahl gestellt, mit der Art dahinter:
+
+```
+100 %  3001-1 [Set]   ·  Propeller Buggy
+100 %  3001 [Teil]    ·  Brick 2 x 4
+```
+
+Bei erkannten Vorschlägen steht die Art nicht dabei — das sind fast immer
+Figuren, da wäre es nur Ballast.
+
+## Wenn der Verkäufer die Figur dreht
+
+Viele drehen die Figur in der Hand, manche stellen sie auf eine **Drehscheibe**.
+Beides sah der Scanner früher als lauter einzelne Begegnungen — und auf einer
+Drehscheibe löste er überhaupt nicht aus, weil er auf Stillstand wartete, der
+nie kam. Zwei Dinge greifen jetzt ineinander.
+
+### Er löst auch aus, während sich etwas dreht
+
+Bewegt sich das Bild lange gleichmäßig weiter, ohne je stillzustehen, dann
+dreht sich offenbar etwas — und dann wird mittendrin geschickt, statt ewig zu
+warten. In der Wächterzeile steht dabei *dreht sich* statt *still*.
+
+Ein **Sprung** gilt weiterhin nicht als Drehen: Wenn jemand ins Bild greift
+oder etwas Neues hinstellt, ändert sich zu viel auf einmal. Genau daran
+erkennt der Scanner den Artikelwechsel — und fängt an, für den neuen Artikel
+Ansichten zu sammeln.
+
+Höchstens **vier Ansichten je Artikel**. Danach ist Ruhe, bis der nächste
+Artikel kommt. Eine Drehscheibe würde sonst endlos Anfragen erzeugen.
+
+> **Bewegung ist nicht gleich Drehung.** Der Wächter kann eine Drehscheibe
+> nicht von irgendetwas anderem unterscheiden, das sich anhaltend bewegt –
+> eine Laufschrift, ein Countdown, ein scrollender Chat im gemerkten Bereich
+> sehen für ihn genauso aus. Deshalb gibt er auf: **Waren drei Anfragen
+> hintereinander ergebnislos, hört der Dreh-Auslöser auf.** Wo dreimal nichts
+> zu erkennen war, bringt ein viertes Bild desselben Flecks auch nichts. In
+> der Wächterzeile steht dann, worauf er wartet.
+>
+> Es geht von selbst weiter, sobald sich wirklich etwas ändert: Ein Sprung im
+> Bild gilt als neuer Artikel und gibt ihm eine neue Chance. Und **der
+> Stillstand-Auslöser bleibt die ganze Zeit scharf** – wer die Figur ruhig
+> hält, bekommt seinen Versuch, sonst wäre der Bereich für den Rest des
+> Abends tot.
+
+### Die Ansichten werden zu einer Trefferliste vereint
+
+Das ist der eigentliche Gewinn. Drei Ansichten sind drei Erkennungsversuche
+derselben Figur, und die Erkennung antwortet aus jedem Winkel etwas anderes.
+Statt die vorige Antwort wegzuwerfen, kommt alles in **eine** Liste:
+
+```
+    78 %  sw0417   ·  Mace Windu  (2×)
+    64 %  11833 [Teil]  ·  Ständer
+    55 %  sw0056   ·  Mace Windu Ep2
+```
+
+Was mehrfach gefunden wurde, steht oben — und das **(2×)** ist die
+verlässlichere Zahl als die Trefferquote daneben. Eine Figur, die aus zwei
+Winkeln mit 62 % und 58 % kommt, ist mit sehr viel höherer Wahrscheinlichkeit
+die richtige als eine, die einmal mit 83 % aufblitzt und danach nie wieder.
+Von der Trefferquote bleibt die beste stehen.
+
+Als Aufnahme bleibt die Ansicht stehen, in der die oberste Figur am
+deutlichsten zu sehen war — aus ihr stammt die beste Quote, und sie ist es,
+die später als Foto am Artikel hängt.
+
+### Was ihr gewählt habt, bleibt gewählt
+
+**Eine neue Ansicht reißt die Auswahl nicht weg.** Habt ihr auf die zweite
+Variante geklickt, bleibt sie ausgewählt, auch wenn die Sortierung sich
+ändert. Das ist keine Bequemlichkeit, sondern Sicherheit: Sonst drehte sich
+die Scheibe genau in dem Moment weiter, in dem ihr auf „＋ Sammlung" zielt,
+und der Klick legte etwas anderes an.
+
+Ebenso bleibt es **still**: Ein Wunsch klingt nur, wenn er **neu**
+hinzukommt. War er schon in der ersten Ansicht dabei, habt ihr ihn längst
+gehört; taucht er erst in der dritten auf, klingt es dann.
+
+> **Sicher unterscheiden lässt sich das nicht.** Zwei verschiedene Figuren auf
+> demselben Ständer haben denselben Ständer in den Vorschlägen, und dann hält
+> der Scanner sie für eine. Schlimm ist das nicht: Es wird **nichts
+> verworfen**, die Liste wird nur länger, und die getroffene Auswahl bleibt
+> stehen. Nach 25 Sekunden ohne Nachschub gilt der nächste Scan ohnehin als
+> neuer Artikel.
+
+## 🧍 Nur Figuren
+
+Der Haken neben den anderen beiden. Ist er gesetzt, kommen **nur Minifiguren**
+in die Trefferliste; Sets und Teile werden aussortiert. Bei einem
+Figuren-Stream ist das der halbe Ärger weniger — die Erkennung greift sonst
+gern nach dem Ständer, dem Sockel oder der Platte in der Hand.
+
+Wird dabei alles aussortiert, steht das auch da:
+
+```
+Keine Figur darunter – alle 2 Vorschläge waren Sets oder Teile.
+Haken »Nur Figuren« aus, oder die Nummer eintippen.
+```
+
+Wichtig, denn „Nichts erkannt" wäre gelogen — man suchte den Fehler beim
+Rahmen statt beim Haken.
+
+**Für getippte Nummern gilt er nicht.** Wer eine Setnummer eintippt, meint das
+Set; der Haken ist gegen Fehlerkennungen da, nicht gegen euren eigenen Willen.
+Und für ältere Verlaufszeilen gilt er auch nicht rückwirkend — was einmal in
+der Liste stand, bleibt beim Zurückspringen auffindbar.
+
+## Wenn die Erkennung das Falsche findet
+
+Sie sucht **ein** Objekt im Bild und entscheidet sich für das größte oder
+deutlichste. Steht die Figur auf einem Ständer oder einer Platte, ist das oft
+nicht die Figur. Drei Wege aus der Lage, in dieser Reihenfolge:
+
+0. **[🧍 Nur Figuren](#-nur-figuren)** ankreuzen, wenn ohnehin nur Figuren
+   kommen – dann fällt der Ständer von selbst weg.
+1. **Enger rahmen** und noch einmal auslösen – nur die Figur, nicht die halbe
+   Auslage.
+2. **[Nummer nachtragen](#nummer-von-hand-nachtragen)**, wenn sie angesagt oder
+   eingeblendet wird. Der kürzeste Weg.
+3. **📋 Bild in die Zwischenablage** und in der App weitermachen, wo die
+   Reihum-Suche mehrere Figuren im selben Bild durchgeht.
+
+## Wenn nichts erkannt wird
+
+Dieselben Regeln wie beim Scannen in der App: Die Erkennung sucht **ein**
+Objekt im Bild. Rahmt also eine Figur, nicht die halbe Auslage – und zieht
+den Rahmen erst, wenn die Figur einen Moment still gehalten wird.
+Bewegungsunschärfe kostet mehr Treffer als schlechtes Licht.
+
+## Was liegen bleibt – und was nicht
+
+**Kein Bild wird gespeichert.** Die Aufnahmen im Verlauf liegen nur im
+Arbeitsspeicher, und auch dort nur die letzten 30; mit dem Schließen des
+Fensters sind sie weg.
+
+Die **Zeilen** des Verlaufs überleben dagegen – die letzten 20, in
+`~/.brickfolio-livescan-verlauf.json` (0600). Darin stehen Uhrzeit,
+Katalognummern, Namen und Trefferquoten, also dasselbe, was im Fenster zu
+lesen ist. Wer das nicht will, löscht die Datei; das Programm legt sie beim
+nächsten Beenden neu an und kommt ohne sie einwandfrei zurecht.
+
+Zwischendurch entstehen Dateien – anders geht es nicht, `screencapture` und
+`sips` arbeiten auf der Platte. Jede davon wird sofort nach Gebrauch wieder
+gelöscht, auch wenn dabei etwas schiefgeht. Beim Zuschauen sind das drei
+Dateien je Takt, und keine überlebt ihn.
+
+Nur bei einem **harten Abbruch** – Absturz, „Sofort beenden", Abmelden mitten
+im Takt – bleibt genau der gerade laufende Abzug liegen. Deshalb räumt das
+Programm beim Start seine eigenen Reste weg, sofern sie älter als eine Stunde
+sind. Die Stunde schützt ein zweites, gleichzeitig laufendes Fenster.
+
+Auf der Platte bleibt damit nur:
+
+| | |
+|---|---|
+| `~/.brickfolio-livescan.json` | Adresse, Benutzername, **Token** (nicht das Passwort), gemerkter Bereich, Zustand, Empfindlichkeit, Haken. Nur für euch lesbar (0600). |
+| `~/.brickfolio-livescan-verlauf.json` | die letzten 20 Verlaufszeilen – Uhrzeit, Nummern, Namen, Trefferquoten. **Keine Bilder.** Ebenfalls 0600. |
+| eure Instanz | die Fotos, die ihr mit **📷 Foto am Artikel mitspeichern** bewusst an einen Artikel gehängt habt |
+
+## Prüfen, ob noch alles stimmt
+
+```bash
+/opt/homebrew/bin/python3 /Users/nutzer/dev/brickfolio-livescan/pruefung.py
+```
+
+Über hundert Proben am **verborgenen** Fenster: kein Bildschirmfoto, keine
+Anfrage an die Instanz, keine Änderung an euren Einstellungen. Statt der
+Instanz steht eine Attrappe, statt der Bildschirmabzüge ein Drehbuch. Läuft in
+ein paar Sekunden durch und sagt am Ende, was durchgefallen ist.
+
+## Lizenz
+
+MIT, wie Brickfolio selbst.
+
+## Einbauen
+
+Unter [Releases](https://github.com/Melle79/brickfolio-livescan/releases)
+liegt bei jeder Fassung ein ZIP. Herunterladen, entpacken, die App nach
+**Programme** ziehen – fertig. Sie bringt Python und Tk selbst mit, es muss
+nichts weiter installiert sein.
+
+**Beim allerersten Start** meldet macOS „stammt von einem nicht verifizierten
+Entwickler". Das ist zu erwarten: Die App ist nicht bei Apple angemeldet
+(das kostet 99 €/Jahr). Einmal **Rechtsklick auf die App → Öffnen**, dann
+im Dialog **Öffnen** – danach startet sie für immer normal.
+
+Bleibt sie stur, hat der Download sie unter Quarantäne gestellt:
+
+    xattr -dr com.apple.quarantine "/Applications/Brickfolio Live-Scanner.app"
+
+Die App ist für **Apple Silicon** gebaut (M1 und neuer). Auf Intel-Macs
+läuft sie nicht; dort startet man `livescan.py` von Hand.
+
+### Beim ersten Start
+Der Scanner fragt nach der Adresse eurer Brickfolio-Instanz und einem
+Token. Beides landet in `~/.brickfolio-livescan.json` – im Benutzerordner,
+nicht in der App. Ein Austausch der App lässt die Anmeldung also stehen.
+
+macOS fragt außerdem einmal nach der **Bildschirmaufnahme**
+(Systemeinstellungen → Datenschutz). Ohne diese Freigabe kommt statt des
+Ausschnitts ein schwarzes Bild.
+
+## Selbst bauen
+
+    python3 -m venv .venv-bau
+    .venv-bau/bin/python -m pip install py2app
+    .venv-bau/bin/python setup.py py2app
+
+Danach liegt `dist/Brickfolio Live-Scanner.app`. Gebraucht wird ein Python
+mit brauchbarem Tk – das Python aus macOS bringt ein zu altes mit und
+zeichnet nur ein weißes Fenster. Unter Homebrew: `brew install python-tk`.
+
+## Prüfen
+
+    python3 pruefung.py
+
+Läuft ohne Netz und ohne Instanz; die Proben bauen echte Fenster und
+räumen hinterher auf. Wer etwas ändert, lässt sie vorher und nachher
+laufen – und macht die Gegenprobe: Ohne die Änderung *muss* eine Probe
+fehlschlagen, sonst prüft sie nichts.
+
+## Quellen und Rechtliches
+
+Preise, Namen und Bilder stammen von **BrickLink** über deren offizielle
+Schnittstelle, mit einem Zugang, der auf euren Namen läuft. Die Seiten von
+BrickLink werden nicht abgerufen – deren Nutzungsbedingungen erlauben das
+nicht.
+
+LEGO® ist eine Marke der LEGO Gruppe, die dieses Werkzeug weder
+unterstützt noch autorisiert hat. Ebenso wenig BrickLink.
+
+## Lizenz und Haftung
+
+MIT – siehe [LICENSE](LICENSE). Im Klartext: Macht damit, was ihr wollt.
+Aber es ist ein Feierabendwerkzeug für den eigenen Gebrauch, keine
+geprüfte Software. Es kommt **ohne jede Gewährleistung**; für Schäden,
+verlorene Daten, falsche Preise oder Fehlkäufe haftet niemand. Wer damit
+auf einer Auktion mitbietet, entscheidet selbst – der Scanner zeigt nur
+an, was BrickLink gerade sagt, und der kann irren.

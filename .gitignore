@@ -1,0 +1,9 @@
+# py2app legt beides beim Bauen an
+build/
+dist/
+__pycache__/
+*.pyc
+
+# Zugang und Verlauf gehören dem Rechner, nicht dem Repo:
+# Darin stehen die Adresse der eigenen Instanz und ein Token.
+.brickfolio-livescan*.json
