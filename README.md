@@ -634,14 +634,28 @@ liegt bei jeder Fassung ein ZIP. Herunterladen, entpacken, die App nach
 **Programme** ziehen – fertig. Sie bringt Python und Tk selbst mit, es muss
 nichts weiter installiert sein.
 
-**Beim allerersten Start** meldet macOS „stammt von einem nicht verifizierten
-Entwickler". Das ist zu erwarten: Die App ist nicht bei Apple angemeldet
-(das kostet 99 €/Jahr). Einmal **Rechtsklick auf die App → Öffnen**, dann
-im Dialog **Öffnen** – danach startet sie für immer normal.
+**Beim allerersten Start** blockt macOS ab: „Apple konnte nicht überprüfen,
+ob *Brickfolio Live-Scanner* frei von Schadsoftware ist", mit den Knöpfen
+*In den Papierkorb legen* und *Fertig*. Das ist zu erwarten – die App ist
+nicht bei Apple notarisiert, das setzt ein Entwicklerkonto für 99 €/Jahr
+voraus. Es ist ein Preisschild, kein Fehler.
 
-Bleibt sie stur, hat der Download sie unter Quarantäne gestellt:
+**Nicht** in den Papierkorb legen, sondern **Fertig** klicken. Dann:
+
+**Systemeinstellungen → Datenschutz & Sicherheit** → ganz nach unten
+scrollen. Dort steht jetzt eine Zeile mit **Dennoch öffnen**. Der Knopf
+erscheint nur, wenn man es vorher einmal versucht hat.
+
+Oder in einem Rutsch im Terminal:
 
     xattr -dr com.apple.quarantine "/Applications/Brickfolio Live-Scanner.app"
+
+**Rechtsklick → Öffnen hilft hier nicht.** Das war bis macOS 14 der Weg;
+seit macOS 15 hat Apple diese Abkürzung für genau diesen Dialog
+abgeschafft. Anleitungen im Netz, die es noch empfehlen, sind veraltet.
+
+Wer die App **selbst baut** (siehe unten), sieht davon gar nichts: Die
+Quarantäne hängt am Download, nicht an der App.
 
 Die App ist für **Apple Silicon** gebaut (M1 und neuer). Auf Intel-Macs
 läuft sie nicht; dort startet man `livescan.py` von Hand.
