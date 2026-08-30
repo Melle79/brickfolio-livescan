@@ -306,18 +306,22 @@ app._kandidaten_zeigen([artikel("sw0500", 88, "Wunschfigur", wanted=1)])
 takt(wurzel, 30)
 pruefe(len(toene) == 1, "es klingt")
 pruefe(app._blinkt is not None, "und blinkt")
-# **Nicht sechsmal blind hinschauen.** So stand es hier bis 30.08.2026:
-# 6 × 25 ms = 150 ms – weniger als *ein* Wechsel (260 ms). Dass es trotzdem
-# durchging, war Glück; auf einem ausgelasteten Runner fiel es durch, ohne
-# dass am Programm etwas falsch war. Jetzt wird geschaut, bis die Farbe da
-# ist, und die Grenzen stehen in den Konstanten statt in geratenen Zahlen.
-farben = set()
-for _ in range(int(livescan.WUNSCH_TAKT * 3 / 20)):
-    takt(wurzel, 20)
-    farben.add(app.rahmen.cget("background"))
-    if livescan.WUNSCH_AN in farben:
-        break
-pruefe(livescan.WUNSCH_AN in farben, "in der Wunschfarbe")
+# **Nicht auf die Uhr verlassen.** Bis 30.08.2026 tastete diese Probe die
+# Farbe sechsmal in 150 ms ab – weniger als *ein* Wechsel (260 ms). Dass
+# sie durchging, war Glück: Auf dem Mac-Runner fiel sie durch, auf dem
+# Windows-Runner auch, und beide Male war am Programm nichts falsch.
+#
+# Warten hilft hier nicht weiter, es verschiebt die Wackelei nur. Also
+# wird der Schritt selbst ausgelöst: Bei ungeradem Rest **muss** die
+# Wunschfarbe stehen, bei geradem der Grund. Das gilt auf jeder Maschine,
+# egal wie ausgelastet sie ist. Dass der Blinker von allein läuft, steht
+# schon in der Probe darüber.
+app._wunsch_blinken(app.rahmen_aus, 7)
+pruefe(app.rahmen.cget("background") == livescan.WUNSCH_AN,
+       "in der Wunschfarbe")
+app._wunsch_blinken(app.rahmen_aus, 6)
+pruefe(app.rahmen.cget("background") == app.rahmen_aus,
+       "und dazwischen wieder im Grund")
 # Und jetzt abwarten, bis der Blinker von selbst fertig ist.
 takt(wurzel, livescan.WUNSCH_TAKTE * livescan.WUNSCH_TAKT + 400)
 pruefe(app._blinkt is None, "danach hört es auf")
