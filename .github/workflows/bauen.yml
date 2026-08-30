@@ -114,6 +114,13 @@ jobs:
       - name: Prüfen
         # Dieselben Proben wie auf dem Mac. Mit Pillow zur Hand laufen
         # zusaetzlich die des Windows-Wegs mit.
+        #
+        # Die Windows-Konsole spricht von Haus aus cp1252 und bricht am
+        # ersten Haken (✓) der Ausgabe ab - mit UnicodeEncodeError, was
+        # aussieht wie ein Fehler im Programm und keiner ist.
+        env:
+          PYTHONUTF8: "1"
+          PYTHONIOENCODING: "utf-8"
         run: python pruefung.py
 
       - name: Bündeln

@@ -306,12 +306,20 @@ app._kandidaten_zeigen([artikel("sw0500", 88, "Wunschfigur", wanted=1)])
 takt(wurzel, 30)
 pruefe(len(toene) == 1, "es klingt")
 pruefe(app._blinkt is not None, "und blinkt")
+# **Nicht sechsmal blind hinschauen.** So stand es hier bis 30.08.2026:
+# 6 × 25 ms = 150 ms – weniger als *ein* Wechsel (260 ms). Dass es trotzdem
+# durchging, war Glück; auf einem ausgelasteten Runner fiel es durch, ohne
+# dass am Programm etwas falsch war. Jetzt wird geschaut, bis die Farbe da
+# ist, und die Grenzen stehen in den Konstanten statt in geratenen Zahlen.
 farben = set()
-for _ in range(6):
-    takt(wurzel, 25)
+for _ in range(int(livescan.WUNSCH_TAKT * 3 / 20)):
+    takt(wurzel, 20)
     farben.add(app.rahmen.cget("background"))
+    if livescan.WUNSCH_AN in farben:
+        break
 pruefe(livescan.WUNSCH_AN in farben, "in der Wunschfarbe")
-takt(wurzel, 300)
+# Und jetzt abwarten, bis der Blinker von selbst fertig ist.
+takt(wurzel, livescan.WUNSCH_TAKTE * livescan.WUNSCH_TAKT + 400)
 pruefe(app._blinkt is None, "danach hört es auf")
 pruefe(app.liste.get(0).startswith("☆"), "die Zeile trägt das ☆")
 
