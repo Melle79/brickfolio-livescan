@@ -77,6 +77,11 @@ VERSION = "1.0.4"
 # tun, als koennten wir es.
 IST_WINDOWS = sys.platform.startswith("win")
 
+# Tk kennt nicht ueberall dieselben Mauszeiger: »pointinghand« ist ein
+# macOS-Name, Windows bricht damit ab (bad cursor spec). »crosshair« gibt
+# es auf beiden, das braucht keine Weiche.
+ZEIGEHAND = "hand2" if IST_WINDOWS else "pointinghand"
+
 EINSTELLUNGEN = os.path.expanduser("~/.brickfolio-livescan.json")
 
 # Der Verlauf überlebt jetzt den Neustart – aber nur die Zeilen, **nie die
@@ -1481,7 +1486,7 @@ class LiveScanner:
         for feld, hole, titel in (
                 (self.vorschau, lambda: self.letztes_bild, "Aufnahme"),
                 (self.referenz, lambda: self._referenz_roh, "BrickLink")):
-            feld.config(cursor="pointinghand")
+            feld.config(cursor=ZEIGEHAND)
             feld.bind("<Button-1>",
                       lambda _e, h=hole, t=titel: self.gross_zeigen(h(), t))
 
@@ -1951,7 +1956,7 @@ class LiveScanner:
             self._mini_bilder.append(mini)      # Verweise halten
             rahmen = tk.Frame(streifen, padx=MINI_RAND, pady=MINI_RAND)
             rahmen.pack(side="left", padx=(0, 5))
-            feld = tk.Label(rahmen, image=mini, bd=0, cursor="pointinghand")
+            feld = tk.Label(rahmen, image=mini, bd=0, cursor=ZEIGEHAND)
             feld.pack()
             # Das Häkchen liegt **über** dem Bild, in der oberen Ecke. Es ist
             # das, was man von weitem sieht – die Randfarbe allein geht in

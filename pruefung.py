@@ -1006,6 +1006,11 @@ pruefe("winsound" in _scan_roh, "der Ton hat einen Windows-Zweig")
 pruefe("System.Windows.Forms.Clipboard" in _scan_roh,
        "die Zwischenablage auch")
 pruefe("ImageGrab" in _scan_roh, "und die Bildschirmaufnahme")
+# Tk kennt nicht ueberall dieselben Mauszeiger. »pointinghand« gibt es nur
+# auf dem Mac; Windows bricht mit »bad cursor spec« ab - und zwar beim
+# Aufbau des Fensters, also sofort und vollstaendig.
+pruefe('cursor="pointinghand"' not in _scan_roh,
+       "kein mac-eigener Mauszeiger fest verdrahtet")
 
 try:
     from PIL import Image as _PIL
