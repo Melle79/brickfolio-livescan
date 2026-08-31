@@ -343,7 +343,7 @@ takt(wurzel, 30)
 pruefe(len(toene) == 1, "ein neu hinzugekommener Wunsch klingt sehr wohl")
 
 # ============================================ 5. Nummer nachtragen
-abschnitt("5. Nummer nachtragen – des Anwenders Chewbacca")
+abschnitt("5. Nummer nachtragen – der Chewbacca-Fall")
 app._kandidaten_zeigen([artikel("11833", 62, "Plate, Round 4 x 4", "part"),
                         artikel("60474", 59, "Plate mit Loch", "part")])
 takt(wurzel)
@@ -644,7 +644,7 @@ zweit.destroy()
 # Und wenn nichts zu schieben ist, passiert nichts.
 #
 # **Nicht auf Platz hoffen.** Frueher zog diese Probe das Fenster auf
-# Bildschirmhoehe und nahm an, dann passe der Inhalt hinein. Auf des Anwenders
+# Bildschirmhoehe und nahm an, dann passe der Inhalt hinein. Auf dem
 # 2160-px-Schirm stimmte das, auf dem Bau-Runner nicht - dort scheiterte
 # sie, obwohl nichts kaputt war. Also andersherum: den Inhalt so lange
 # kleiner machen, bis er hineinpasst, und das vorher nachweisen.
@@ -882,7 +882,7 @@ pruefe(livescan._schon_da_marke({}) == " ",
 pruefe(livescan._schon_da_marke(dict(AUF_LISTE, owned=1)) == "✔",
        "beides -> Besitz schlägt Liste")
 
-# **Ein eigenes Set färbt nicht mehr grün.** Man trägt die Figuren zu
+# **Ein eigenes Set färbt nicht mehr grün.** Wer die Figuren zu
 # jedem Set einzeln ein; steht eine Figur nicht in der Sammlung, hat er sie
 # auch nicht – viele Sets kommen ohne Figuren herein (30.08.2026).
 pruefe(livescan._schon_da({"owned": 1}), "grün bei: Besitz")
@@ -960,7 +960,7 @@ wurzel.destroy()
 # ==================================================== Hilfe-Menue
 # macOS legt den Hilfe-Eintrag von sich aus an. Ohne hinterlegten Befehl
 # antwortet es "Help isn't available for Brickfolio Live-Scanner" - genau
-# so trat es auf am 30.08.2026.
+# so aufgetreten am 30.08.2026.
 abschnitt("10. Die Hilfe zeigt das Handbuch")
 _w = tk.Tk(); _w.withdraw()
 _w.createcommand("::tk::mac::ShowHelp", livescan.handbuch_zeigen)

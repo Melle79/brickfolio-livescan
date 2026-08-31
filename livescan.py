@@ -538,7 +538,7 @@ def _schon_da(info: dict) -> bool:
     oder sie liegt auf einer offenen Einkaufsliste. Beide machen den Rahmen
     grün – die Farbe heißt schlicht „hast du schon".
 
-    **Ein gebrauchtes Set zählt seit dem 30.08.2026 nicht mehr mit.** der Anwender
+    **Ein gebrauchtes Set zählt seit dem 30.08.2026 nicht mehr mit.** Wer
     trägt zu jedem Set, das er *mit* Figuren kauft, die Figuren einzeln in
     die Sammlung ein. Steht eine Figur also nicht in der Sammlung, hat er
     sie auch nicht – viele Sets kommen ohne Figuren herein. Der grüne
@@ -581,7 +581,7 @@ def _besitz_zeile(info: dict) -> dict:
     - **Weder noch.** Dann darf es auch so dastehen.
 
     Ein eigenes Set kommt hier nicht vor. Es steht in der Zeile darunter,
-    als Hinweis – die Figuren zu einem Set trägt der Anwender einzeln ein, ein Set
+    als Hinweis – die Figuren zu einem Set trägt man einzeln ein, ein Set
     ohne Figureneintrag heißt also: Figur nicht da.
     """
     habe = info.get("owned") or 0
