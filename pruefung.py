@@ -1291,6 +1291,58 @@ pruefe(_bk.get("cf-access-client-id") == "kennung",
 pruefe("Brickfolio-Live-Scanner/" in _bk.get("user-agent", ""),
        "und die eigene Kennung – sonst blockt schon der Bot-Schutz")
 
+# ======================================= Der Rahmen trifft, was man sieht
+# Hier sass der Fehler vom 31.08.2026: Auf einem Windows-Laptop mit
+# zweitem Monitor markierte man eine Stelle und fotografiert wurde eine
+# ganz andere. Drei Annahmen waren schuld, alle drei stehen hier als Probe.
+abschnitt("9d. Aus dem Rahmen wird ein Bildschirmausschnitt")
+
+# 1:1 – ohne Skalierung, ein Bildschirm. Der einfachste Fall.
+pruefe(livescan.auswahl_umrechnen(100, 50, 300, 250, 1.0, 1.0)
+       == (100, 50, 200, 200),
+       "ohne Skalierung kommt heraus, was man gezogen hat")
+
+# Rückwärts gezogen – von rechts unten nach links oben.
+pruefe(livescan.auswahl_umrechnen(300, 250, 100, 50, 1.0, 1.0)
+       == (100, 50, 200, 200),
+       "und rückwärts gezogen dasselbe")
+
+# **150 % Skalierung.** Der alte Code rundete den Faktor auf 2 – der
+# Ausschnitt sass um ein Drittel daneben.
+pruefe(livescan.auswahl_umrechnen(100, 100, 300, 300, 1.5, 1.5)
+       == (150, 150, 300, 300),
+       "bei 150 % wird mit 1,5 gerechnet, nicht mit 2")
+pruefe(livescan.auswahl_umrechnen(100, 100, 300, 300, 1.25, 1.25)
+       == (125, 125, 250, 250),
+       "und bei 125 % mit 1,25")
+
+# **Zweiter Monitor links.** Der Ursprung des Desktops ist die linke obere
+# Ecke des Hauptbildschirms – links davon wird x negativ.
+pruefe(livescan.auswahl_umrechnen(10, 20, 110, 120, 1.0, 1.0,
+                                  ursprung=(-1920, 0))
+       == (-1910, 20, 100, 100),
+       "auf dem Monitor links vom ersten wird x negativ")
+
+# Beides zusammen – der Fall, der es aufgedeckt hat.
+_erg = livescan.auswahl_umrechnen(200, 100, 400, 300, 1.5, 1.5,
+                                  ursprung=(-2560, -140))
+pruefe(_erg == (-2260, 10, 300, 300),
+       "und beides zusammen: skalierter Zweitmonitor links oben")
+
+# Ein Klick ist kein Bereich.
+pruefe(livescan.auswahl_umrechnen(100, 100, 105, 105, 1.0, 1.0) is None,
+       "ein versehentlicher Klick ergibt keinen Bereich")
+pruefe(livescan.auswahl_umrechnen(100, 100, 400, 105, 1.0, 1.0) is None,
+       "und ein Strich auch nicht")
+
+# Die Aufnahme muss über *alle* Bildschirme gehen – sonst zeigt die
+# Vorschau zwei Monitore und der Ausschnitt kommt vom ersten.
+_roh_scan = pathlib.Path(livescan.__file__).read_text()
+pruefe("ImageGrab.grab(all_screens=True)" in _roh_scan,
+       "das Abbild kommt von allen Bildschirmen, nicht nur vom ersten")
+pruefe("GetSystemMetrics" in _roh_scan,
+       "und die Maße des ganzen Desktops werden erfragt")
+
 # ==================================================== Der Windows-Weg
 # Der Mac-Weg bleibt unangetastet; fuer Windows stehen eigene Zweige
 # daneben. Sie lassen sich hier pruefen, indem die Weiche umgelegt wird -

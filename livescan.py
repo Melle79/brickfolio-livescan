@@ -70,7 +70,7 @@ from tkinter import ttk
 
 # Steht auch im Info.plist des Bündels. setup.py liest sie von hier,
 # damit sie nicht an zwei Stellen auseinanderläuft; pruefung.py wacht darüber.
-VERSION = "1.3.2"
+VERSION = "1.3.3"
 
 # Auf welchem System laufen wir? Der Mac-Weg bleibt unangetastet; fuer
 # Windows stehen daneben eigene Zweige. Alles andere (Linux) faellt auf den
@@ -1211,6 +1211,28 @@ def _multipart(felder: dict, grenze: str) -> bytes:
 
 # --------------------------------------------------------- Bildschirmfoto
 
+def windows_desktop() -> tuple:
+    """Ursprung und Maße **aller** Bildschirme zusammen.
+
+    Ein zweiter Monitor links vom ersten hat negative x-Werte – der
+    Ursprung des virtuellen Desktops ist die linke obere Ecke des
+    *Hauptbildschirms*, nicht die des Gesamtbilds. Wer das übersieht,
+    fotografiert an einer ganz anderen Stelle ab.
+
+    (x, y, breite, hoehe). Ohne Windows: (0, 0, 0, 0).
+    """
+    if not IST_WINDOWS:
+        return (0, 0, 0, 0)
+    try:
+        import ctypes
+        hole = ctypes.windll.user32.GetSystemMetrics
+        # 76..79: SM_XVIRTUALSCREEN, SM_YVIRTUALSCREEN,
+        #         SM_CXVIRTUALSCREEN, SM_CYVIRTUALSCREEN
+        return (hole(76), hole(77), hole(78), hole(79))
+    except Exception:
+        return (0, 0, 0, 0)
+
+
 def schirmfoto(pfad: str) -> bool:
     """Ein Abbild des Hauptbildschirms nach `pfad` legen.
 
@@ -1238,7 +1260,11 @@ def schirmfoto(pfad: str) -> bool:
                 from PIL import ImageGrab
             except ImportError:
                 return False
-            bild = ImageGrab.grab()
+            # **Über alle Bildschirme.** Ohne `all_screens` kommt nur der
+            # Hauptmonitor – die Aufnahme des gemerkten Bereichs geht aber
+            # über alle. Zwei verschiedene Koordinatenräume, und der
+            # Ausschnitt sitzt woanders als der gezogene Rahmen.
+            bild = ImageGrab.grab(all_screens=True)
             bild.save(pfad, format="PNG")
         else:
             subprocess.run(["screencapture", "-x", "-t", "png", "-D", "1",
@@ -1307,6 +1333,35 @@ def _screencapture(zusatz: list) -> bytes | None:
 
 # ------------------------------------------------------- Bereich merken
 
+def auswahl_umrechnen(x1, y1, x2, y2, faktor_x, faktor_y,
+                      ursprung=(0, 0), mindestens=40) -> tuple | None:
+    """Aus einem Rahmen in der Vorschau ein Rechteck auf dem Bildschirm.
+
+    Steht hier als eigene Funktion, weil genau in dieser Rechnung der
+    Fehler vom 31.08.2026 saß – und weil sie in einem Tk-Ereignis
+    versteckt nicht zu prüfen war.
+
+    Drei Dinge, die sie leisten muss:
+
+    * **Kommazahlen.** Windows skaliert mit 125 %, 150 %, 175 %. Wer
+      ganzzahlig rundet, sitzt um ein Drittel daneben.
+    * **Ein Ursprung.** Ein zweiter Monitor links vom ersten fängt bei
+      negativen x an; der Ursprung des Desktops ist die linke obere Ecke
+      des *Haupt*bildschirms.
+    * **Eine Untergrenze.** Ein versehentlicher Klick ist kein Bereich.
+
+    Gibt None zurück, wenn der Rahmen zu klein ist.
+    """
+    links, oben = min(x1, x2), min(y1, y2)
+    breite = abs(x2 - x1) * faktor_x
+    hoehe = abs(y2 - y1) * faktor_y
+    if breite <= mindestens or hoehe <= mindestens:
+        return None
+    return (int(round(ursprung[0] + links * faktor_x)),
+            int(round(ursprung[1] + oben * faktor_y)),
+            int(round(breite)), int(round(hoehe)))
+
+
 def bereich_waehlen(wurzel: tk.Tk) -> tuple | None:
     """Einen festen Bereich merken – für Serien aus demselben Ausschnitt.
 
@@ -1320,6 +1375,7 @@ def bereich_waehlen(wurzel: tk.Tk) -> tuple | None:
     """
     roh_pfad = os.path.join(tempfile.gettempdir(),
                             f"brickfolio-bereich-{uuid.uuid4().hex}.png")
+    klein_pfad = ""
     try:
         if not schirmfoto(roh_pfad):
             return None
@@ -1329,22 +1385,53 @@ def bereich_waehlen(wurzel: tk.Tk) -> tuple | None:
         fenster.attributes("-topmost", True)
         fenster.config(cursor="crosshair")
 
-        # Tk kann PNG von sich aus – dafür braucht es keine Bibliothek.
-        bild = tk.PhotoImage(file=roh_pfad)
         breite_pkt = wurzel.winfo_screenwidth()
         hoehe_pkt = wurzel.winfo_screenheight()
 
-        # Auf Retina hat das Abbild doppelt so viele Bildpunkte wie der
-        # Bildschirm Punkte hat. Und damit das Fenster auf den Schirm passt,
-        # wird zusätzlich verkleinert – beides steckt in `teiler`.
-        teiler = max(1, round(bild.width() / breite_pkt))
-        passt = 1
-        while bild.width() // (teiler * passt) > breite_pkt - 80 \
-                or bild.height() // (teiler * passt) > hoehe_pkt - 140:
-            passt += 1
-        klein = bild.subsample(teiler * passt)
-        # Von Fensterpunkt zu Bildschirmpunkt: genau dieser Faktor.
-        faktor = passt
+        if IST_WINDOWS:
+            # **Hier muss mit Kommazahlen gerechnet werden.** Der Mac-Weg
+            # unten teilt ganzzahlig – auf Retina ist das Verhältnis 1 oder
+            # 2, da geht das auf. Windows skaliert mit 125 %, 150 %, 175 %;
+            # gerundet käme 1 oder 2 heraus, und der Ausschnitt säße um ein
+            # Drittel daneben. Genau so ist es am 31.08.2026 aufgetreten.
+            #
+            # Und gerechnet wird gegen den **ganzen** Desktop, nicht gegen
+            # den Hauptbildschirm: Bei zwei Monitoren ist `winfo_screenwidth`
+            # nur der erste, das Abbild aber zeigt beide.
+            Bild = _pillow()
+            u_x, u_y, d_breite, d_hoehe = windows_desktop()
+            if Bild is None or d_breite <= 0:
+                return None
+            with Bild.open(roh_pfad) as roh_bild:
+                b_breite, b_hoehe = roh_bild.size
+                skala = min(1.0, (breite_pkt - 80) / float(b_breite),
+                            (hoehe_pkt - 140) / float(b_hoehe))
+                v_breite = max(1, int(b_breite * skala))
+                v_hoehe = max(1, int(b_hoehe * skala))
+                klein_pfad = roh_pfad + "-vorschau.png"
+                roh_bild.resize((v_breite, v_hoehe),
+                                Bild.LANCZOS).save(klein_pfad, "PNG")
+            klein = tk.PhotoImage(file=klein_pfad)
+            # Von Vorschaupunkt zu Bildschirmpunkt – als Kommazahl, und je
+            # Richtung getrennt, falls die Vorschau nicht exakt proportional
+            # gerundet wurde.
+            faktor_x = d_breite / float(v_breite)
+            faktor_y = d_hoehe / float(v_hoehe)
+            ursprung = (u_x, u_y)
+        else:
+            # Tk kann PNG von sich aus – dafür braucht es keine Bibliothek.
+            bild = tk.PhotoImage(file=roh_pfad)
+            # Auf Retina hat das Abbild doppelt so viele Bildpunkte wie der
+            # Bildschirm Punkte hat. Und damit das Fenster auf den Schirm
+            # passt, wird zusätzlich verkleinert – beides steckt in `teiler`.
+            teiler = max(1, round(bild.width() / breite_pkt))
+            passt = 1
+            while bild.width() // (teiler * passt) > breite_pkt - 80 \
+                    or bild.height() // (teiler * passt) > hoehe_pkt - 140:
+                passt += 1
+            klein = bild.subsample(teiler * passt)
+            faktor_x = faktor_y = float(passt)
+            ursprung = (0, 0)
 
         flaeche = tk.Canvas(fenster, width=klein.width(),
                             height=klein.height(), highlightthickness=0)
@@ -1369,11 +1456,9 @@ def bereich_waehlen(wurzel: tk.Tk) -> tuple | None:
                                e.x, e.y)
 
         def hoch(e):
-            x1, y1 = min(stand["x"], e.x), min(stand["y"], e.y)
-            x2, y2 = max(stand["x"], e.x), max(stand["y"], e.y)
-            if (x2 - x1) * faktor > 40 and (y2 - y1) * faktor > 40:
-                stand["fertig"] = (x1 * faktor, y1 * faktor,
-                                   (x2 - x1) * faktor, (y2 - y1) * faktor)
+            stand["fertig"] = auswahl_umrechnen(
+                stand["x"], stand["y"], e.x, e.y,
+                faktor_x, faktor_y, ursprung)
             fenster.destroy()
 
         flaeche.bind("<ButtonPress-1>", runter)
@@ -1384,10 +1469,12 @@ def bereich_waehlen(wurzel: tk.Tk) -> tuple | None:
         wurzel.wait_window(fenster)
         return stand["fertig"]
     finally:
-        try:
-            os.remove(roh_pfad)
-        except OSError:
-            pass
+        for weg in (roh_pfad, klein_pfad):
+            try:
+                if weg:
+                    os.remove(weg)
+            except OSError:
+                pass
 
 
 # ------------------------------------------------------------ Oberfläche
