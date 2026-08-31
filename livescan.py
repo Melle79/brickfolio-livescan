@@ -70,7 +70,7 @@ from tkinter import ttk
 
 # Steht auch im Info.plist des Bündels. setup.py liest sie von hier,
 # damit sie nicht an zwei Stellen auseinanderläuft; pruefung.py wacht darüber.
-VERSION = "1.5.0"
+VERSION = "1.5.1"
 
 # Auf welchem System laufen wir? Der Mac-Weg bleibt unangetastet; fuer
 # Windows stehen daneben eigene Zweige. Alles andere (Linux) faellt auf den
@@ -1211,6 +1211,65 @@ def _multipart(felder: dict, grenze: str) -> bytes:
 
 # --------------------------------------------------------- Bildschirmfoto
 
+# ---------------------------------------------------------------- Farben
+#
+# **Warum das nicht einfach feste Werte sein können.** Die grauen Töne hier
+# waren für einen hellen Grund gewählt: #666 auf Weiß ist ein ruhiges,
+# gut lesbares Grau. Auf dem dunklen Grund des Nachtmodus ist dasselbe
+# #666 fast unsichtbar – Nummer, Trefferquote und Preise verschwanden.
+#
+# Gemessen statt geraten: Welcher Modus gerade gilt, verrät die Helligkeit
+# des Fenstergrunds. Das kommt ohne Systemabfrage aus und stimmt auch dann,
+# wenn jemand mitten im Betrieb umschaltet – dann greift es beim nächsten
+# Start.
+FARBEN = {
+    "leise":    "#666",    # Beiwerk: Beschriftungen, Hinweise
+    "matt":     "#888",    # noch leiser: Zusätze in Zeilen
+    "still":    "#999",    # am leisesten: Erledigtes, Ausgegrautes
+    "klar":     "#222",    # kräftiger Text
+    "kraeftig": "#444",    # etwas weniger kräftig
+    "linie":    "#ddd",    # Trennlinien und leere Flächen
+    "verweis":  "#0b5fa5", # anklickbar
+}
+
+_FARBEN_DUNKEL = {
+    "leise":  "#9a9a9a",
+    "matt":   "#a8a8a8",
+    "still":  "#b4b4b4",
+    "klar":   "#e8e8e8",
+    "kraeftig": "#d0d0d0",
+    "linie":  "#3a3a3a",
+    "verweis": "#6cb6f0",
+}
+
+
+def grund_ist_dunkel(wurzel) -> bool:
+    """Ist der Fenstergrund dunkel?
+
+    Über `winfo_rgb`, das auch die Systemfarben von macOS auflöst – deshalb
+    braucht es keine Abfrage beim Betriebssystem und funktioniert auf
+    beiden Systemen gleich.
+    """
+    try:
+        farbe = ttk.Style().lookup("TFrame", "background") \
+            or wurzel.cget("background")
+        r, g, b = wurzel.winfo_rgb(farbe)
+    except Exception:
+        return False
+    # winfo_rgb liefert 16 Bit je Kanal.
+    return (0.299 * r + 0.587 * g + 0.114 * b) / 65535.0 < 0.5
+
+
+def farben_setzen(wurzel, dunkel=None) -> bool:
+    """Die Palette an den Grund anpassen. Gibt zurück, ob dunkel."""
+    dunkel = grund_ist_dunkel(wurzel) if dunkel is None else dunkel
+    FARBEN.update(_FARBEN_DUNKEL if dunkel else _FARBEN_HELL)
+    return dunkel
+
+
+_FARBEN_HELL = dict(FARBEN)
+
+
 DPI_WEG = "noch nicht gesetzt"
 
 
@@ -1676,6 +1735,9 @@ class LiveScanner:
         # mehreren Wegen gebucht wird. Nur die Prüfsummen, nicht die Bilder.
         self.fotos = set()
 
+        # **Vor `_bauen`**, denn die Farben werden beim Anlegen der
+        # Bedienelemente gelesen.
+        farben_setzen(wurzel)
         wurzel.title("Brickfolio Live-Scanner")
         # Der Haken »Immer vorn« entscheidet; voreingestellt bleibt es an.
         wurzel.attributes("-topmost",
@@ -1867,7 +1929,7 @@ class LiveScanner:
         # zum Treffer dasteht.
         # Wird erst eingeblendet, wenn der Wächter läuft – sonst nähme eine
         # leere Zeile dauerhaft Höhe weg, die unten der Verlauf braucht.
-        self.autostand = ttk.Label(r, text="", foreground="#888")
+        self.autostand = ttk.Label(r, text="", foreground=FARBEN["matt"])
 
         # Der andere Weg: nicht hier weitermachen, sondern das Bild der App
         # geben und dort den gewohnten Ablauf nehmen.
@@ -1876,7 +1938,7 @@ class LiveScanner:
                                    command=self.in_ablage, state="disabled")
         self.k_ablage.pack(fill="x", pady=(6, 0))
 
-        self.stand = ttk.Label(r, text="", foreground="#666")
+        self.stand = ttk.Label(r, text="", foreground=FARBEN["leise"])
         self.stand.pack(fill="x", pady=(8, 4))
 
         # Links die eigene Aufnahme, rechts das Katalogbild der gewählten
@@ -1899,19 +1961,19 @@ class LiveScanner:
         bilder.pack(padx=RAHMEN_DICK, pady=RAHMEN_DICK)
         links = tk.Frame(bilder, background=self.rahmen_aus)
         links.pack(side="left")
-        b_links = tk.Label(links, text="Aufnahme", foreground="#666",
+        b_links = tk.Label(links, text="Aufnahme", foreground=FARBEN["leise"],
                            background=self.rahmen_aus)
         b_links.pack()
         self.vorschau = tk.Label(links, bd=1, relief="solid", width=17,
-                                 height=9, text="—", foreground="#999")
+                                 height=9, text="—", foreground=FARBEN["still"])
         self.vorschau.pack()
         rechts = tk.Frame(bilder, background=self.rahmen_aus)
         rechts.pack(side="left", padx=(8, 0))
-        b_rechts = tk.Label(rechts, text="BrickLink", foreground="#666",
+        b_rechts = tk.Label(rechts, text="BrickLink", foreground=FARBEN["leise"],
                             background=self.rahmen_aus)
         b_rechts.pack()
         self.referenz = tk.Label(rechts, bd=1, relief="solid", width=17,
-                                 height=9, text="—", foreground="#999")
+                                 height=9, text="—", foreground=FARBEN["still"])
         self.referenz.pack()
         # Die Bildfelder selbst bleiben außen vor: Solange kein Bild da ist,
         # steht dort ein „—", und mit grünem Grund sähe das nach Ladefehler
@@ -1999,22 +2061,22 @@ class LiveScanner:
         # Kurz halten: Die Reihe muss auch in die Mindestbreite des Fensters
         # passen, sonst schiebt sie den „Suchen"-Knopf hinaus.
         ttk.Label(self.nummerreihe, text="z. B. sw0402, 75192, 3001",
-                  foreground="#888").pack(side="left", padx=(8, 0))
+                  foreground=FARBEN["matt"]).pack(side="left", padx=(8, 0))
 
         self.name = ttk.Label(r, text="—", font=("Helvetica", 14, "bold"))
         self.name.pack(fill="x", pady=(6, 0))
-        self.unter = ttk.Label(r, text="", foreground="#444")
+        self.unter = ttk.Label(r, text="", foreground=FARBEN["kraeftig"])
         self.unter.pack(fill="x", pady=(2, 0))
         self.besitz = ttk.Label(r, text="", font=("Helvetica", 12, "bold"))
         self.besitz.pack(fill="x", pady=(4, 0))
         # Zweite Zeile, weil sie eine andere Frage beantwortet: Die erste
         # sagt „habe ich es", diese „habe ich es mir vorgemerkt". Beides in
         # einer Zeile bräuchte zwei Farben.
-        self.woanders = ttk.Label(r, text="", foreground="#0b5fa5")
+        self.woanders = ttk.Label(r, text="", foreground=FARBEN["verweis"])
         self.woanders.pack(fill="x", pady=(1, 0))
         # Dritte Zeile: der Katalog, nicht euer Bestand. Blasser gesetzt,
         # weil sie beim Mitbieten seltener zählt als die beiden darüber.
-        self.setliste = ttk.Label(r, text="", foreground="#666")
+        self.setliste = ttk.Label(r, text="", foreground=FARBEN["leise"])
         self.setliste.pack(fill="x", pady=(1, 0))
 
         self._breite_labels = [self.stand, self.name, self.unter,
@@ -2083,7 +2145,7 @@ class LiveScanner:
         fuss.pack(fill="x", pady=(8, 0))
         ttk.Button(fuss, text="Zugang …", command=self.zugang_zeigen
                    ).pack(side="left")
-        ttk.Label(fuss, text="⏎ löst auch aus", foreground="#888"
+        ttk.Label(fuss, text="⏎ löst auch aus", foreground=FARBEN["matt"]
                   ).pack(side="right")
         self.wurzel.bind("<Return>", lambda _: self.rahmen_senden())
 
@@ -2104,7 +2166,7 @@ class LiveScanner:
         if daten is None:
             # Blass gesetzt heißt: von hier führt kein Weg zurück. Das sagt
             # es, ohne an jede zweite Zeile ein Zeichen zu hängen.
-            self.verlauf.itemconfig(0, foreground="#888")
+            self.verlauf.itemconfig(0, foreground=FARBEN["matt"])
         if vorher:
             self.verlauf.selection_clear(0, "end")
             self.verlauf.selection_set(vorher[0] + 1)
@@ -2170,7 +2232,7 @@ class LiveScanner:
             " vom " + datum if datum and datum != time.strftime("%d.%m.")
             else ""))
         self.verlauf_daten.append(None)
-        self.verlauf.itemconfig(self.verlauf.size() - 1, foreground="#888")
+        self.verlauf.itemconfig(self.verlauf.size() - 1, foreground=FARBEN["matt"])
         for e in zeilen:
             daten = e.get("daten")
             if daten is not None and not daten.get("kandidaten"):
@@ -2179,7 +2241,7 @@ class LiveScanner:
             self.verlauf_daten.append(daten)
             if daten is None:
                 self.verlauf.itemconfig(self.verlauf.size() - 1,
-                                        foreground="#888")
+                                        foreground=FARBEN["matt"])
 
     def _umbruch_anpassen(self, ereignis):
         """Die Textzeilen so breit umbrechen lassen, wie das Fenster ist.
@@ -2222,7 +2284,7 @@ class LiveScanner:
         for flaeche in self._gruen_flaechen:
             flaeche.config(background=farbe)
         for schrift in self._gruen_schriften:
-            schrift.config(foreground="#ffffff" if hell else "#666")
+            schrift.config(foreground="#ffffff" if hell else FARBEN["leise"])
 
     def _wunsch_blinken(self, grundfarbe, uebrig: int = WUNSCH_TAKTE):
         """Zwischen der Wunschfarbe und dem Grund hin und her.
@@ -2312,11 +2374,11 @@ class LiveScanner:
         # Der Verweis muss am Fenster hängen, sonst räumt Python ihn weg und
         # die Fläche bleibt leer – der klassische Tk-Stolperstein.
         f._bild = bild
-        rahmen = tk.Frame(f, background="#222", padx=3, pady=3)
+        rahmen = tk.Frame(f, background=FARBEN["klar"], padx=3, pady=3)
         rahmen.pack()
         tk.Label(rahmen, image=bild, bd=0).pack()
         tk.Label(rahmen, text=titel + "   ·   Klick schließt",
-                 background="#222", foreground="#ddd").pack(pady=(3, 1))
+                 background=FARBEN["klar"], foreground=FARBEN["linie"]).pack(pady=(3, 1))
 
         # Mittig auf dem **Bildschirm**, nicht über dem Fenster: Das Popup
         # ist mit 1100 px oft breiter als der Scanner selbst, und dann
@@ -2417,7 +2479,7 @@ class LiveScanner:
         rest = len(self.bilder) - MINI_HOECHSTENS
         if rest > 0:
             ttk.Label(streifen, text="+{}".format(rest),
-                      foreground="#888").pack(side="left", padx=(6, 0))
+                      foreground=FARBEN["matt"]).pack(side="left", padx=(6, 0))
         self._ansichten_faerben()
 
     def _ansichten_faerben(self):
@@ -2474,7 +2536,7 @@ class LiveScanner:
         if not bild:
             self._referenzbild = None
             self.referenz.config(image="", text="kein\nKatalogbild",
-                                 foreground="#999", width=17, height=9)
+                                 foreground=FARBEN["still"], width=17, height=9)
             return
         try:
             self._referenzbild = self._bild_einpassen(bild)
@@ -2616,7 +2678,7 @@ class LiveScanner:
         ttk.Separator(r).pack(fill="x", pady=(4, 8))
         ttk.Label(r, text="Cloudflare Access – nur falls nötig",
                   font=("Helvetica", 11, "bold")).pack(anchor="w")
-        ttk.Label(r, wraplength=330, foreground="#666",
+        ttk.Label(r, wraplength=330, foreground=FARBEN["leise"],
                   text="Steht die Instanz hinter Cloudflare Access, braucht "
                        "es einen Dienst-Token. Den legt ihr in Zero Trust an "
                        "und erlaubt ihn in der Richtlinie der Anwendung.").pack(
@@ -2633,7 +2695,7 @@ class LiveScanner:
         # Der Weg ohne eigene Richtlinie in Cloudflare: Browser auf,
         # E-Mail und Code wie gewohnt. `cloudflared` muss dafür auf dem
         # Rechner liegen – fehlt es, sagt der Knopf das auch.
-        ttk.Label(r, foreground="#666", wraplength=330,
+        ttk.Label(r, foreground=FARBEN["leise"], wraplength=330,
                   text="Oder ohne Dienst-Token: einmal im Browser anmelden, "
                        "wie gewohnt mit E-Mail und Code.").pack(
             anchor="w", pady=(4, 4))
@@ -2647,7 +2709,7 @@ class LiveScanner:
             adresse = e_adresse.get().strip()
             k_cf.config(state="disabled",
                         text="🌐 Der Browser ist offen – bitte anmelden …")
-            hinweis.config(text="", foreground="#666")
+            hinweis.config(text="", foreground=FARBEN["leise"])
 
             def fertig(geschafft, meldung):
                 k_cf.config(state="normal",
@@ -3422,7 +3484,7 @@ class LiveScanner:
         else:
             self._vorschaubild = None
             self.vorschau.config(image="", text="Aufnahme\nnicht mehr\nda",
-                                 foreground="#999", width=17, height=9)
+                                 foreground=FARBEN["still"], width=17, height=9)
             self.k_ablage.config(state="disabled")
         self._ansichten_aufbauen()
         self._liste_fuellen(eintrag["kandidaten"], eintrag.get("index", 0))
@@ -3536,7 +3598,7 @@ class LiveScanner:
             label.config(text="")
         self._referenzbild = None
         self._referenz_roh = None
-        self.referenz.config(image="", text="—", foreground="#999",
+        self.referenz.config(image="", text="—", foreground=FARBEN["still"],
                              width=17, height=9)
         self._blinken_beenden(self.rahmen_aus)
         for k in (self.k_sammlung, self.k_merken, self.k_liste):

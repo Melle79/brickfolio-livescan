@@ -309,6 +309,75 @@ pruefe(app.treffer["item_id"] == "sw0101",
 pruefe(app.liste.get(app.liste.curselection()[0]).find("sw0101") > 0,
        "und die Markierung ist mitgewandert")
 
+# ================================================ Lesbar in beiden Modi
+# Die grauen Töne waren für einen hellen Grund gewählt. Im Nachtmodus war
+# #666 fast unsichtbar – Nummer, Trefferquote und Preise verschwanden.
+# Hier wird deshalb nicht behauptet, dass es lesbar ist, sondern gemessen.
+abschnitt("2c. Die Schrift steht in beiden Modi ab")
+
+
+def _leuchtkraft(farbe):
+    """Relative Helligkeit nach WCAG – Grundlage jedes Kontrastmaßes."""
+    farbe = farbe.lstrip("#")
+    if len(farbe) == 3:
+        farbe = "".join(z * 2 for z in farbe)
+    werte = []
+    for _i in (0, 2, 4):
+        k = int(farbe[_i:_i + 2], 16) / 255.0
+        werte.append(k / 12.92 if k <= 0.03928
+                     else ((k + 0.055) / 1.055) ** 2.4)
+    return 0.2126 * werte[0] + 0.7152 * werte[1] + 0.0722 * werte[2]
+
+
+def _kontrast(vorne, hinten):
+    a, b = _leuchtkraft(vorne), _leuchtkraft(hinten)
+    return (max(a, b) + 0.05) / (min(a, b) + 0.05)
+
+
+# **Der Maßstab ist der Tagmodus selbst.** Eine feste Grenze würde das
+# gewachsene helle Bild über einen Zahlenwert umbauen – die leisen Töne
+# liegen dort bewusst niedrig (#888 auf Weiß ergibt 3,5). Verlangt wird
+# deshalb: Jede Rolle muss nachts **mindestens so gut** stehen wie am Tag.
+# Dazu eine Untergrenze, damit nichts ganz verschwindet.
+_ROLLEN = ("leise", "matt", "still", "klar", "kraeftig", "verweis")
+
+livescan.farben_setzen(None, dunkel=False)
+_hell_werte = {_r: _kontrast(livescan.FARBEN[_r], "#ffffff") for _r in _ROLLEN}
+livescan.farben_setzen(None, dunkel=True)
+_dunkel_werte = {_r: _kontrast(livescan.FARBEN[_r], "#1e1e1e")
+                 for _r in _ROLLEN}
+
+# Bei den kräftigen Rollen genügen 7,0: Fast-Schwarz auf Weiß erreicht
+# fast 16, das ist auf dunklem Grund nicht zu halten und muss es auch
+# nicht – ab etwa 7 liest sich Text ohne jede Anstrengung. Wo der Tagmodus
+# schwächer ist, gilt weiterhin er als Maßstab.
+for _r in _ROLLEN:
+    _soll = min(_hell_werte[_r], 7.0)
+    pruefe(_dunkel_werte[_r] >= _soll,
+           "»%s« steht nachts gut genug (%.1f, verlangt %.1f)"
+           % (_r, _dunkel_werte[_r], _soll))
+
+_schwach = min((_dunkel_werte[_r], _r) for _r in _ROLLEN)
+pruefe(_schwach[0] >= 2.5,
+       "und nichts verschwindet im Dunkeln (schwächster: »%s« mit %.1f)"
+       % (_schwach[1], _schwach[0]))
+
+# Die Erkennung misst den Grund, statt das System zu fragen – das
+# funktioniert auf beiden Systemen gleich.
+_wf = tk.Tk()
+_wf.withdraw()
+pruefe(isinstance(livescan.grund_ist_dunkel(_wf), bool),
+       "der Fenstergrund lässt sich messen")
+livescan.farben_setzen(_wf)
+_wf.destroy()
+
+_roh_farben = pathlib.Path(livescan.__file__).read_text()
+pruefe("winfo_rgb" in _roh_farben,
+       "über winfo_rgb – das löst auch die Systemfarben von macOS auf")
+pruefe("farben_setzen(wurzel)"
+       in _roh_farben[:_roh_farben.index("self._bauen()")],
+       "und die Palette wird **vor** dem Aufbau der Oberfläche gesetzt")
+
 # ==================================================== 4. Wunschliste
 abschnitt("4. Wunschliste: Blinken und Ton")
 toene.clear()
