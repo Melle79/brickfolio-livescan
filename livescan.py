@@ -69,7 +69,7 @@ from tkinter import ttk
 
 # Steht auch im Info.plist des Bündels. setup.py liest sie von hier,
 # damit sie nicht an zwei Stellen auseinanderläuft; pruefung.py wacht darüber.
-VERSION = "1.1.0"
+VERSION = "1.2.0"
 
 # Auf welchem System laufen wir? Der Mac-Weg bleibt unangetastet; fuer
 # Windows stehen daneben eigene Zweige. Alles andere (Linux) faellt auf den
@@ -133,20 +133,59 @@ class Fehler(RuntimeError):
     pass
 
 
+class _KeineUmleitung(urllib.request.HTTPRedirectHandler):
+    """Umleitungen **nicht** von selbst verfolgen.
+
+    Sonst landet eine Anfrage stillschweigend auf der Anmeldeseite von
+    Cloudflare Access, kommt mit 200 und HTML zurueck, und der Scanner
+    meldet »Unerwartete Antwort« - obwohl das Problem einen Namen hat.
+    Ungefragt umgeleitet zu werden ist bei einer Schnittstelle ohnehin
+    kein guter Zustand.
+    """
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        return None
+
+
+_OEFFNER = urllib.request.build_opener(_KeineUmleitung)
+
+
 class Instanz:
     """Die Verbindung zu einer Brickfolio-Instanz – über deren Schnittstelle,
     ohne irgendetwas über ihr Inneres anzunehmen."""
 
-    def __init__(self, adresse: str = "", token: str = ""):
+    def __init__(self, adresse: str = "", token: str = "",
+                 cf_kennung: str = "", cf_geheim: str = ""):
         self.adresse = adresse.rstrip("/")
         self.token = token
+        # Steht die Instanz hinter Cloudflare Access, laesst dieses Paar
+        # ein Programm durch - eine Anmeldeseite koennte es ja nicht
+        # ausfuellen. Beides legt der Betreiber in Cloudflare Zero Trust
+        # an; hier wird es nur weitergereicht.
+        self.cf_kennung = cf_kennung
+        self.cf_geheim = cf_geheim
+        # Der zweite Weg: Wer sich einmal mit `cloudflared access login`
+        # im Browser angemeldet hat - also ganz normal per E-Mail und
+        # Zugangscode -, hat dort eine Sitzung liegen. Die holen wir uns,
+        # aber nicht bei jeder Anfrage: Ein Unterprozess je Bild waere
+        # spuerbar. Darum gemerkt, mit Verfallszeit.
+        self._cf_sitzung = ""
+        self._cf_sitzung_bis = 0.0
 
     # ------------------------------------------------------- Grundlagen
     def _anfrage(self, weg: str, daten=None, methode="GET", felder=None):
         url = self.adresse + weg
-        kopf = {"Accept": "application/json"}
+        # **Sagen, wer man ist.** Ohne eigene Kennung schickt urllib
+        # »Python-urllib/3.x« - und Cloudflares Bot-Schutz weist das ab,
+        # noch bevor Access ueberhaupt zum Zuge kommt: »The site owner has
+        # blocked access based on your browser's signature«. Mit Namen und
+        # Fassung ist die Anfrage zuordenbar, und der Betreiber kann sie
+        # gezielt durchlassen.
+        kopf = {"Accept": "application/json",
+                "User-Agent": "Brickfolio-Live-Scanner/%s" % VERSION}
         if self.token:
             kopf["Authorization"] = "Bearer " + self.token
+        kopf.update(self._cf_kopfzeilen())
         koerper = None
         if felder is not None:
             grenze = "----brickfolio" + uuid.uuid4().hex
@@ -160,9 +199,24 @@ class Instanz:
         antrag = urllib.request.Request(url, data=koerper, headers=kopf,
                                         method=methode)
         try:
-            with urllib.request.urlopen(antrag, timeout=90) as antwort:
+            with _OEFFNER.open(antrag, timeout=90) as antwort:
                 roh = antwort.read()
         except urllib.error.HTTPError as e:
+            # **Cloudflare Access antwortet mit einer Umleitung**, nicht mit
+            # einem Fehler. Ohne diesen Zweig laeuft man in die Anmeldeseite
+            # und liest »Unerwartete Antwort der Instanz« - eine Meldung,
+            # die in die falsche Richtung schickt.
+            if e.code in (301, 302, 303, 307, 308):
+                ziel = e.headers.get("Location", "")
+                if "cloudflareaccess.com" in ziel or "/cdn-cgi/access/" in ziel:
+                    raise Fehler(
+                        "Diese Instanz steht hinter Cloudflare Access – eine "
+                        "Anmeldeseite kann dieses Werkzeug nicht ausfüllen. "
+                        "Zwei Wege: unter »Zugang …« einen Dienst-Token "
+                        "hinterlegen, oder einmal »cloudflared access login "
+                        "%s« ausführen." % self.adresse) from None
+                raise Fehler("Die Instanz leitet weiter (%s). Stimmt die "
+                             "Adresse?" % e.code) from None
             raise Fehler(_meldung(e)) from None
         except urllib.error.URLError as e:
             raise Fehler(f"Instanz nicht erreichbar ({e.reason})") from None
@@ -170,6 +224,61 @@ class Instanz:
             return json.loads(roh)
         except ValueError:
             raise Fehler("Unerwartete Antwort der Instanz") from None
+
+    # --------------------------------------------------- Cloudflare Access
+    def _cf_kopfzeilen(self) -> dict:
+        """Was eine Anfrage braucht, um an Cloudflare Access vorbeizukommen.
+
+        Zwei Wege, in dieser Reihenfolge:
+
+        1. **Dienst-Token.** Zwei Werte aus Zero Trust, hinterlegt unter
+           »Zugang …«. Braucht keine zusaetzliche Software und laeuft nicht
+           ab – der Weg fuer fremde Rechner und fuer Windows.
+        2. **Eine Sitzung von `cloudflared`.** Wer sich einmal mit
+           `cloudflared access login` angemeldet hat – ganz normal per
+           E-Mail und Zugangscode –, braucht keine eigene Richtlinie in
+           Cloudflare. Dafuer muss `cloudflared` auf dem Rechner liegen,
+           und die Sitzung laeuft irgendwann ab.
+
+        Ist beides nicht da, bleibt es leer und `_anfrage` sagt hinterher,
+        was fehlt.
+        """
+        if self.cf_kennung and self.cf_geheim:
+            return {"CF-Access-Client-Id": self.cf_kennung,
+                    "CF-Access-Client-Secret": self.cf_geheim}
+        sitzung = self._cf_sitzung_holen()
+        if sitzung:
+            # Beide Formen: Access nimmt die Kopfzeile, der Cookie ist der
+            # Weg, den auch ein Browser geht. Zwei zu schicken kostet
+            # nichts und erspart die Frage, welche Fassung was erwartet.
+            return {"cf-access-token": sitzung,
+                    "Cookie": "CF_Authorization=" + sitzung}
+        return {}
+
+    def _cf_sitzung_holen(self) -> str:
+        """Den Sitzungs-Token von `cloudflared` erfragen – hoechstens alle
+        zehn Minuten neu."""
+        if not self.adresse.startswith("https://"):
+            return ""                     # im Heimnetz steht kein Access davor
+        jetzt = time.time()
+        if self._cf_sitzung and jetzt < self._cf_sitzung_bis:
+            return self._cf_sitzung
+        try:
+            fertig = subprocess.run(
+                ["cloudflared", "access", "token", "-app=" + self.adresse],
+                capture_output=True, text=True, timeout=20,
+                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+        except (OSError, subprocess.SubprocessError):
+            return ""                     # nicht installiert – kein Drama
+        wert = (fertig.stdout or "").strip()
+        # Ohne Anmeldung schreibt cloudflared eine Meldung statt eines
+        # Tokens. Ein JWT hat drei durch Punkte getrennte Teile und keine
+        # Leerzeichen – daran laesst sich das eine vom anderen scheiden.
+        if fertig.returncode != 0 or wert.count(".") != 2 or " " in wert:
+            return ""
+        self._cf_sitzung = wert
+        self._cf_sitzung_bis = jetzt + 600
+        return wert
 
     # ----------------------------------------------------------- Wege
     def anmelden(self, benutzer: str, passwort: str) -> None:
@@ -1194,7 +1303,9 @@ class LiveScanner:
         self.wurzel = wurzel
         self.daten = lesen()
         self.instanz = Instanz(self.daten.get("adresse", ""),
-                               self.daten.get("token", ""))
+                               self.daten.get("token", ""),
+                               self.daten.get("cf_kennung", ""),
+                               self.daten.get("cf_geheim", ""))
         self.bereich = tuple(self.daten["bereich"]) if self.daten.get(
             "bereich") else None
         self.treffer = None
@@ -2166,11 +2277,35 @@ class LiveScanner:
         ttk.Label(r, text="Passwort").pack(anchor="w")
         e_passwort = ttk.Entry(r, width=42, show="•")
         e_passwort.pack(fill="x", pady=(0, 8))
+
+        # Nur nötig, wenn die Instanz hinter Cloudflare Access steht. Die
+        # Felder stehen leer da und stören niemanden, der sie nicht braucht
+        # – aber wer sie braucht, findet sie ohne zu suchen.
+        ttk.Separator(r).pack(fill="x", pady=(4, 8))
+        ttk.Label(r, text="Cloudflare Access – nur falls nötig",
+                  font=("Helvetica", 11, "bold")).pack(anchor="w")
+        ttk.Label(r, wraplength=330, foreground="#666",
+                  text="Steht die Instanz hinter Cloudflare Access, braucht "
+                       "es einen Dienst-Token. Den legt ihr in Zero Trust an "
+                       "und erlaubt ihn in der Richtlinie der Anwendung.").pack(
+            anchor="w", pady=(0, 6))
+        ttk.Label(r, text="Client-ID").pack(anchor="w")
+        e_cf_id = ttk.Entry(r, width=42)
+        e_cf_id.insert(0, self.daten.get("cf_kennung", ""))
+        e_cf_id.pack(fill="x", pady=(0, 8))
+        ttk.Label(r, text="Client-Secret").pack(anchor="w")
+        e_cf_geheim = ttk.Entry(r, width=42, show="•")
+        e_cf_geheim.insert(0, self.daten.get("cf_geheim", ""))
+        e_cf_geheim.pack(fill="x", pady=(0, 8))
+
         hinweis = ttk.Label(r, text="", foreground="#b00", wraplength=330)
         hinweis.pack(fill="x")
 
         def anmelden():
-            neue = Instanz(e_adresse.get().strip())
+            # Der Dienst-Token muss schon beim Anmelden mit – sonst kommt
+            # die Anfrage gar nicht erst bis zur Instanz.
+            neue = Instanz(e_adresse.get().strip(), "",
+                           e_cf_id.get().strip(), e_cf_geheim.get().strip())
             try:
                 neue.anmelden(e_benutzer.get().strip(), e_passwort.get())
             except Fehler as e:
@@ -2179,7 +2314,9 @@ class LiveScanner:
             self.instanz = neue
             self.daten.update({"adresse": neue.adresse,
                                "benutzer": e_benutzer.get().strip(),
-                               "token": neue.token})
+                               "token": neue.token,
+                               "cf_kennung": neue.cf_kennung,
+                               "cf_geheim": neue.cf_geheim})
             schreiben(self.daten)
             self.listen_laden()
             self.melden("Angemeldet.")

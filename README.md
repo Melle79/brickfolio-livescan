@@ -633,6 +633,57 @@ ein paar Sekunden durch und sagt am Ende, was durchgefallen ist.
 
 MIT, wie Brickfolio selbst.
 
+## Wenn die Instanz hinter Cloudflare Access steht
+
+Dann kommt auf jede Anfrage eine **Anmeldeseite** statt Daten. Die kann
+dieses Werkzeug nicht ausfüllen – es liest ja kein Postfach und tippt
+keinen Zugangscode ab. Der Scanner erkennt das und sagt es beim Namen,
+statt „Unerwartete Antwort der Instanz" zu melden.
+
+Zwei Wege hindurch. Im Heimnetz braucht es **keinen** davon: Wer die
+Instanz direkt über ihre lokale Adresse erreicht, kommt an Cloudflare
+ohnehin vorbei.
+
+### Weg 1: Dienst-Token — für fremde Rechner
+
+Eine **zusätzliche** Richtlinie neben der bestehenden. Wer sich im Browser
+mit E-Mail und Zugangscode anmeldet, merkt davon nichts.
+
+1. In **Cloudflare Zero Trust → Access → Service Auth → Service Tokens**
+   einen Token anlegen. Client-ID und Client-Secret erscheinen **einmal** –
+   das Secret gibt es später nicht wieder zu sehen.
+2. Bei der Anwendung (`brickfolio.example`) unter **Policies** eine neue
+   anlegen: Aktion **Service Auth**, Bedingung **Service Token** → der eben
+   erzeugte. Die vorhandene E-Mail-Richtlinie bleibt daneben stehen.
+3. Im Scanner unter **Zugang …** beide Werte eintragen.
+
+Braucht keine zusätzliche Software, läuft nicht ab, funktioniert auch
+unter Windows. Der Preis: Ein langlebiges Geheimnis liegt in
+`~/.brickfolio-livescan.json` – so wie der Instanz-Token auch.
+
+### Weg 2: `cloudflared` — ohne neue Richtlinie
+
+    brew install cloudflared                       # macOS
+    cloudflared access login https://brickfolio.example
+
+Der Browser öffnet sich, ihr meldet euch **wie gewohnt** mit E-Mail und
+Zugangscode an. Danach findet der Scanner die Sitzung von selbst und
+schickt sie mit; er fragt `cloudflared` höchstens alle zehn Minuten
+erneut, damit nicht bei jedem Bild ein Programm startet.
+
+Dafür muss `cloudflared` auf jedem Rechner liegen, und die Sitzung läuft
+nach der in Cloudflare eingestellten Dauer ab – dann ist die Anmeldung zu
+wiederholen.
+
+**Liegt beides vor, gewinnt der Dienst-Token**, weil er nicht abläuft.
+
+### Noch etwas: der Scanner sagt jetzt, wer er ist
+
+Ohne eigene Kennung schickt Python `Python-urllib/3.x`, und Cloudflares
+Bot-Schutz weist das ab – noch bevor Access überhaupt zum Zuge kommt
+(„The site owner has blocked access based on your browser's signature").
+Der Scanner meldet sich deshalb als `Brickfolio-Live-Scanner/<Fassung>`.
+
 ## Einbauen unter Windows
 
 Unter [Releases](https://github.com/Melle79/brickfolio-livescan/releases)

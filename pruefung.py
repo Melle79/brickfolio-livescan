@@ -25,6 +25,7 @@ import pathlib
 import queue
 import io
 import sys
+import urllib.error
 import tempfile
 import time
 import tkinter as tk
@@ -1020,6 +1021,147 @@ pruefe(_icns.exists() and _icns.stat().st_size > 1000,
 # py2app zieht tkinter nur mit, wenn es ausdrücklich dabeisteht.
 pruefe('"packages": ["tkinter"]' in _setup,
        "setup.py nimmt tkinter ausdrücklich mit")
+
+# ============================================== Instanz hinter Cloudflare
+# Steht die Instanz hinter Cloudflare Access, kommt statt JSON eine
+# Anmeldeseite. Die kann dieses Werkzeug nicht ausfüllen – es muss also
+# einen Dienst-Token mitschicken und, wenn der fehlt, verständlich sagen,
+# was los ist. »Unerwartete Antwort der Instanz« schickt in die Irre.
+abschnitt("10b. Instanz hinter Cloudflare Access")
+
+_i = livescan.Instanz("https://beispiel.test", "tok", "kennung", "geheim")
+
+
+class _Antrag:
+    """Fängt ab, was der Scanner senden würde."""
+
+    def __init__(self):
+        self.kopf = {}
+
+
+_gesehen = {}
+
+
+def _falscher_oeffner(antrag, timeout=None):
+    _gesehen["kopf"] = dict(antrag.headers)
+    raise urllib.error.HTTPError(
+        antrag.full_url, 302, "Found",
+        {"Location": "https://firma.cloudflareaccess.com/cdn-cgi/access/"
+                     "login/beispiel.test?kid=abc"}, None)
+
+
+_echt = livescan._OEFFNER.open
+livescan._OEFFNER.open = _falscher_oeffner
+try:
+    try:
+        _i._anfrage("/api/health")
+        _meldung = ""
+    except livescan.Fehler as _e:
+        _meldung = str(_e)
+finally:
+    livescan._OEFFNER.open = _echt
+
+# urllib schreibt Kopfzeilen in Titel-Schreibweise.
+_kopf = {k.lower(): v for k, v in _gesehen.get("kopf", {}).items()}
+pruefe(_kopf.get("Cf-access-client-id".lower()) == "kennung",
+       "die Client-ID geht mit")
+pruefe(_kopf.get("Cf-access-client-secret".lower()) == "geheim",
+       "das Client-Secret auch")
+pruefe(_kopf.get("authorization") == "Bearer tok",
+       "und der eigene Token bleibt daneben bestehen")
+pruefe("Brickfolio-Live-Scanner/" in _kopf.get("user-agent", ""),
+       "der Scanner sagt, wer er ist – sonst weist Cloudflares Bot-Schutz "
+       "ihn ab,\n       bevor Access überhaupt zum Zuge kommt")
+pruefe("Cloudflare Access" in _meldung and "Dienst-Token" in _meldung,
+       "und die Umleitung wird beim Namen genannt")
+pruefe("Unerwartete Antwort" not in _meldung,
+       "statt »Unerwartete Antwort der Instanz«, was in die Irre führt")
+
+# Ohne Dienst-Token gehen die beiden Kopfzeilen gar nicht erst mit.
+_ohne = livescan.Instanz("https://beispiel.test", "tok")
+livescan._OEFFNER.open = _falscher_oeffner
+try:
+    try:
+        _ohne._anfrage("/api/health")
+    except livescan.Fehler:
+        pass
+finally:
+    livescan._OEFFNER.open = _echt
+_kopf2 = {k.lower() for k in _gesehen.get("kopf", {})}
+pruefe("cf-access-client-id" not in _kopf2,
+       "ohne Dienst-Token bleiben die Kopfzeilen weg")
+
+# --- Der zweite Weg: eine Sitzung von cloudflared -----------------------
+# Hier ist cloudflared nicht installiert. Also eine Attrappe – und die
+# wird hinterher **zurückgegeben**, sonst sieht eine spätere Probe sie
+# statt der echten Funktion. Genau das ist heute schon einmal passiert.
+_JWT = "kopf.inhalt.unterschrift"
+
+
+class _Fertig:
+    def __init__(self, aus, code=0):
+        self.stdout, self.returncode = aus, code
+
+
+_rufe = []
+_echt_run = livescan.subprocess.run
+
+
+def _falsches_cloudflared(befehl, **k):
+    _rufe.append(befehl)
+    if befehl[:1] == ["cloudflared"]:
+        return _Fertig(_JWT + "\n")
+    return _echt_run(befehl, **k)
+
+
+livescan.subprocess.run = _falsches_cloudflared
+try:
+    _c = livescan.Instanz("https://beispiel.test", "tok")
+    _k = _c._cf_kopfzeilen()
+    pruefe(_k.get("cf-access-token") == _JWT,
+           "die Sitzung von cloudflared geht als Kopfzeile mit")
+    pruefe(_k.get("Cookie") == "CF_Authorization=" + _JWT,
+           "und zusätzlich als Cookie, wie im Browser")
+
+    _vorher = len(_rufe)
+    _c._cf_kopfzeilen()
+    pruefe(len(_rufe) == _vorher,
+           "beim zweiten Mal wird cloudflared nicht erneut gefragt –\n"
+           "       ein Unterprozess je Bild wäre spürbar")
+
+    # Im Heimnetz steht kein Access davor; dort hat cloudflared nichts zu
+    # suchen und wird gar nicht erst gerufen.
+    _vorher = len(_rufe)
+    _lan = livescan.Instanz("http://localhost:8300", "tok")
+    pruefe(_lan._cf_kopfzeilen() == {},
+           "bei einer Adresse ohne https bleibt es leer")
+    pruefe(len(_rufe) == _vorher,
+           "und cloudflared wird dafür nicht einmal gestartet")
+
+    # Der Dienst-Token hat Vorrang – er läuft nicht ab.
+    _beide = livescan.Instanz("https://beispiel.test", "tok", "kennung", "geheim")
+    pruefe("CF-Access-Client-Id" in _beide._cf_kopfzeilen(),
+           "liegt ein Dienst-Token vor, hat er Vorrang")
+finally:
+    livescan.subprocess.run = _echt_run
+
+# Was cloudflared ohne Anmeldung ausgibt, ist kein Token.
+def _keine_anmeldung(befehl, **k):
+    if befehl[:1] == ["cloudflared"]:
+        return _Fertig("Please run: cloudflared access login ...", 1)
+    return _echt_run(befehl, **k)
+
+
+livescan.subprocess.run = _keine_anmeldung
+try:
+    _ohne_sitzung = livescan.Instanz("https://beispiel.test", "tok")
+    pruefe(_ohne_sitzung._cf_kopfzeilen() == {},
+           "eine Meldung statt eines Tokens wird nicht mitgeschickt")
+finally:
+    livescan.subprocess.run = _echt_run
+
+pruefe("cloudflared access login" in _meldung and "Dienst-Token" in _meldung,
+       "die Fehlermeldung nennt beide Wege")
 
 # ==================================================== Der Windows-Weg
 # Der Mac-Weg bleibt unangetastet; fuer Windows stehen eigene Zweige
