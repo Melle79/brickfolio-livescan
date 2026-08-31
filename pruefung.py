@@ -1125,6 +1125,13 @@ def _falsches_cloudflared(befehl, **k):
     return _echt_run(befehl, **k)
 
 
+# **Nicht davon abhängen, ob cloudflared auf dieser Maschine liegt.**
+# Auf den Bau-Runnern liegt es nicht; die Suche gäbe dann "" zurück und
+# die Attrappe käme nie zum Zug – die Probe fiel durch, obwohl am
+# Programm nichts falsch war. Also auch die Suche vorgeben.
+_echt_finden = livescan.cloudflared_finden
+livescan.cloudflared_finden = lambda: "/irgendwo/cloudflared"
+
 livescan.subprocess.run = _falsches_cloudflared
 try:
     _c = livescan.Instanz("https://beispiel.test", "tok")
@@ -1245,6 +1252,8 @@ pruefe("f.after(0, fertig" in _ab_zugang,
 # Eine App aus dem Programme-Ordner erbt nicht die Pfade der Shell:
 # /opt/homebrew/bin steht dort nicht drin. »cloudflared« galt deshalb als
 # nicht installiert, obwohl es lag – am 31.08.2026 genau so passiert.
+livescan.cloudflared_finden = _echt_finden
+
 pruefe("shutil.which" in _scan_roh_cf and "/opt/homebrew/bin" in _scan_roh_cf,
        "die Suche schaut an den üblichen Orten nach, nicht nur im Suchpfad")
 pruefe("Resources" in _scan_roh_cf.split("def cloudflared_finden")[1][:900],
