@@ -1099,8 +1099,12 @@ _JWT = "kopf.inhalt.unterschrift"
 
 
 class _Fertig:
-    def __init__(self, aus, code=0):
-        self.stdout, self.returncode = aus, code
+    """Was subprocess.run zurückgibt – so viel davon, wie hier gebraucht
+    wird. `stderr` gehört dazu: cf_anmelden liest es, wenn keine Sitzung
+    zustande kam."""
+
+    def __init__(self, aus, code=0, fehler=""):
+        self.stdout, self.returncode, self.stderr = aus, code, fehler
 
 
 _rufe = []
@@ -1162,6 +1166,73 @@ finally:
 
 pruefe("cloudflared access login" in _meldung and "Dienst-Token" in _meldung,
        "die Fehlermeldung nennt beide Wege")
+
+# --- Der Knopf »Über Cloudflare anmelden« -------------------------------
+# Ins Terminal zu schicken war keine gute Antwort. Der Knopf startet den
+# Browser-Weg selbst – und muss dabei alles abfangen, was schiefgehen kann.
+_a = livescan.Instanz("http://localhost:8300")
+_geschafft, _m = _a.cf_anmelden()
+pruefe(not _geschafft and "https" in _m,
+       "ohne https lehnt er ab – im Heimnetz steht kein Cloudflare davor")
+
+
+def _kein_cloudflared(befehl, **k):
+    if befehl[:1] == ["cloudflared"]:
+        raise FileNotFoundError(2, "No such file", "cloudflared")
+    return _echt_run(befehl, **k)
+
+
+livescan.subprocess.run = _kein_cloudflared
+try:
+    _geschafft, _m = livescan.Instanz("https://beispiel.test").cf_anmelden()
+    pruefe(not _geschafft and "brew install cloudflared" in _m,
+           "fehlt cloudflared, sagt er, wie man es bekommt")
+finally:
+    livescan.subprocess.run = _echt_run
+
+
+def _login_ohne_sitzung(befehl, **k):
+    if befehl[:2] == ["cloudflared", "access"]:
+        # Anmeldung bricht ab: kein Token hinterher.
+        return _Fertig("", 1) if befehl[2] == "token" else _Fertig("abgebrochen", 1)
+    return _echt_run(befehl, **k)
+
+
+livescan.subprocess.run = _login_ohne_sitzung
+try:
+    _geschafft, _m = livescan.Instanz("https://beispiel.test").cf_anmelden()
+    pruefe(not _geschafft and "keine Sitzung" in _m,
+           "meldet er Erfolg, ohne dass eine Sitzung entstand, glauben wir\n"
+           "       ihm nicht – nachgesehen wird an der Sitzung selbst")
+finally:
+    livescan.subprocess.run = _echt_run
+
+
+def _login_klappt(befehl, **k):
+    if befehl[:3] == ["cloudflared", "access", "login"]:
+        return _Fertig("Successfully fetched your token", 0)
+    if befehl[:3] == ["cloudflared", "access", "token"]:
+        return _Fertig(_JWT + "\n", 0)
+    return _echt_run(befehl, **k)
+
+
+livescan.subprocess.run = _login_klappt
+try:
+    _geschafft, _m = livescan.Instanz("https://beispiel.test").cf_anmelden()
+    pruefe(_geschafft and "Angemeldet" in _m,
+           "und wenn eine Sitzung da ist, ist es geschafft")
+finally:
+    livescan.subprocess.run = _echt_run
+
+# Der Knopf darf die Oberfläche nicht einfrieren – der Befehl wartet ja,
+# bis jemand im Browser fertig ist.
+_scan_roh_cf = pathlib.Path(livescan.__file__).read_text()
+_ab_zugang = _scan_roh_cf[_scan_roh_cf.index("def zugang_zeigen"):]
+_ab_zugang = _ab_zugang[:_ab_zugang.index("def nummerfeld_zeigen")]
+pruefe("threading.Thread" in _ab_zugang,
+       "der Knopf wartet in einem eigenen Faden")
+pruefe("f.after(0, fertig" in _ab_zugang,
+       "und meldet das Ergebnis zurück in den Hauptfaden")
 
 # ==================================================== Der Windows-Weg
 # Der Mac-Weg bleibt unangetastet; fuer Windows stehen eigene Zweige

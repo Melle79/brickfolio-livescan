@@ -69,7 +69,7 @@ from tkinter import ttk
 
 # Steht auch im Info.plist des Bündels. setup.py liest sie von hier,
 # damit sie nicht an zwei Stellen auseinanderläuft; pruefung.py wacht darüber.
-VERSION = "1.2.0"
+VERSION = "1.3.0"
 
 # Auf welchem System laufen wir? Der Mac-Weg bleibt unangetastet; fuer
 # Windows stehen daneben eigene Zweige. Alles andere (Linux) faellt auf den
@@ -279,6 +279,46 @@ class Instanz:
         self._cf_sitzung = wert
         self._cf_sitzung_bis = jetzt + 600
         return wert
+
+    def cf_anmelden(self, adresse: str = "") -> tuple:
+        """Den Browser für die Cloudflare-Anmeldung öffnen und warten.
+
+        Das ist der Weg, den man erwartet: Browser auf, E-Mail und Code
+        eintragen, fertig. `cloudflared` uebernimmt dabei alles – wir
+        starten es nur und sehen hinterher nach, ob wirklich eine Sitzung
+        entstanden ist.
+
+        Gibt (geschafft, Meldung) zurueck. Laeuft in einem eigenen Faden,
+        denn der Befehl wartet, bis der Mensch im Browser fertig ist.
+        """
+        adresse = (adresse or self.adresse).rstrip("/")
+        if not adresse.startswith("https://"):
+            return (False, "Dafür braucht es eine https-Adresse. Im "
+                           "Heimnetz steht ohnehin kein Cloudflare davor.")
+        try:
+            fertig = subprocess.run(
+                ["cloudflared", "access", "login", adresse],
+                capture_output=True, text=True, timeout=300,
+                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+        except FileNotFoundError:
+            return (False, "»cloudflared« ist nicht installiert. "
+                           "Auf dem Mac: brew install cloudflared")
+        except subprocess.TimeoutExpired:
+            return (False, "Zu lange gewartet – die Anmeldung im Browser "
+                           "wurde nicht zu Ende gebracht.")
+        except (OSError, subprocess.SubprocessError) as e:
+            return (False, "cloudflared ließ sich nicht starten (%s)." % e)
+
+        # **Nicht auf den Rückgabewert verlassen.** Ob wirklich eine
+        # Sitzung entstanden ist, sagt nur die Sitzung selbst.
+        self._cf_sitzung = ""
+        self._cf_sitzung_bis = 0.0
+        self.adresse = adresse
+        if self._cf_sitzung_holen():
+            return (True, "Angemeldet bei Cloudflare. Jetzt »Anmelden«.")
+        ende = ((fertig.stderr or fertig.stdout or "").strip().splitlines()
+                or ["ohne Angabe"])[-1]
+        return (False, "Es kam keine Sitzung zustande (%s)." % ende[:120])
 
     # ----------------------------------------------------------- Wege
     def anmelden(self, benutzer: str, passwort: str) -> None:
@@ -2298,8 +2338,39 @@ class LiveScanner:
         e_cf_geheim.insert(0, self.daten.get("cf_geheim", ""))
         e_cf_geheim.pack(fill="x", pady=(0, 8))
 
+        # Der Weg ohne eigene Richtlinie in Cloudflare: Browser auf,
+        # E-Mail und Code wie gewohnt. `cloudflared` muss dafür auf dem
+        # Rechner liegen – fehlt es, sagt der Knopf das auch.
+        ttk.Label(r, foreground="#666", wraplength=330,
+                  text="Oder ohne Dienst-Token: einmal im Browser anmelden, "
+                       "wie gewohnt mit E-Mail und Code.").pack(
+            anchor="w", pady=(4, 4))
+        k_cf = ttk.Button(r, text="🌐 Über Cloudflare anmelden …")
+        k_cf.pack(anchor="w", pady=(0, 8))
+
         hinweis = ttk.Label(r, text="", foreground="#b00", wraplength=330)
         hinweis.pack(fill="x")
+
+        def cf_anmelden():
+            adresse = e_adresse.get().strip()
+            k_cf.config(state="disabled",
+                        text="🌐 Der Browser ist offen – bitte anmelden …")
+            hinweis.config(text="", foreground="#666")
+
+            def fertig(geschafft, meldung):
+                k_cf.config(state="normal",
+                            text="🌐 Über Cloudflare anmelden …")
+                hinweis.config(text=meldung,
+                               foreground="#2a7" if geschafft else "#b00")
+
+            def arbeit():
+                geschafft, meldung = Instanz(adresse).cf_anmelden()
+                # Zurück in den Hauptfaden – Tk gehört ihm.
+                f.after(0, fertig, geschafft, meldung)
+
+            threading.Thread(target=arbeit, daemon=True).start()
+
+        k_cf.config(command=cf_anmelden)
 
         def anmelden():
             # Der Dienst-Token muss schon beim Anmelden mit – sonst kommt

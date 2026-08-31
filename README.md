@@ -661,13 +661,23 @@ Braucht keine zusätzliche Software, läuft nicht ab, funktioniert auch
 unter Windows. Der Preis: Ein langlebiges Geheimnis liegt in
 `~/.brickfolio-livescan.json` – so wie der Instanz-Token auch.
 
-### Weg 2: `cloudflared` — ohne neue Richtlinie
+### Weg 2: der Knopf im Zugangsfenster — ohne neue Richtlinie
+
+Unter **Zugang …** steht **🌐 Über Cloudflare anmelden …**. Ein Klick, der
+Browser öffnet sich, ihr meldet euch **wie gewohnt** mit E-Mail und
+Zugangscode an — fertig. Danach auf *Anmelden*.
+
+Dafür muss einmalig `cloudflared` auf dem Rechner liegen:
 
     brew install cloudflared                       # macOS
+
+Fehlt es, sagt der Knopf genau das. Von Hand ginge es auch:
+
     cloudflared access login https://brickfolio.example
 
-Der Browser öffnet sich, ihr meldet euch **wie gewohnt** mit E-Mail und
-Zugangscode an. Danach findet der Scanner die Sitzung von selbst und
+Der Scanner glaubt der Rückmeldung von `cloudflared` dabei **nicht**
+ungeprüft: Er sieht hinterher nach, ob wirklich eine Sitzung entstanden
+ist, und meldet nur dann Erfolg. Danach findet der Scanner die Sitzung von selbst und
 schickt sie mit; er fragt `cloudflared` höchstens alle zehn Minuten
 erneut, damit nicht bei jedem Bild ein Programm startet.
 
