@@ -70,7 +70,7 @@ from tkinter import ttk
 
 # Steht auch im Info.plist des Bündels. setup.py liest sie von hier,
 # damit sie nicht an zwei Stellen auseinanderläuft; pruefung.py wacht darüber.
-VERSION = "1.3.4"
+VERSION = "1.4.0"
 
 # Auf welchem System laufen wir? Der Mac-Weg bleibt unangetastet; fuer
 # Windows stehen daneben eigene Zweige. Alles andere (Linux) faellt auf den
@@ -1211,6 +1211,87 @@ def _multipart(felder: dict, grenze: str) -> bytes:
 
 # --------------------------------------------------------- Bildschirmfoto
 
+DPI_WEG = "noch nicht gesetzt"
+
+
+def windows_dpi_beachten() -> str:
+    """Windows sagen, dass wir mit echten Bildpunkten rechnen können.
+
+    **Ohne das belügt Windows das Programm** – wohlmeinend: Ein Programm,
+    das sich nicht als DPI-bewusst meldet, bekommt *logische* Maße
+    vorgesetzt, während `ImageGrab` echte Bildpunkte liefert. Bei einem
+    Bildschirm fällt das kaum auf; bei zweien mit unterschiedlicher
+    Skalierung geht die eine Achse auf und die andere nicht.
+
+    Genau das war der Fehler vom 31.08.2026, und er lag nicht an einem
+    bestimmten Rechner – er trifft jeden mit skaliertem Bildschirm.
+
+    Muss **vor** dem ersten Fenster stehen; danach nimmt Windows es nicht
+    mehr an. Gibt zurück, welcher Weg gegriffen hat.
+    """
+    global DPI_WEG
+    if not IST_WINDOWS:
+        DPI_WEG = "keiner (nicht Windows)"
+        return DPI_WEG
+    import ctypes
+    # -4 ist PER_MONITOR_AWARE_V2: jeder Bildschirm mit eigener Skalierung.
+    # Das gibt es seit Windows 10 1703; darunter die beiden Rückfallwege.
+    try:
+        if ctypes.windll.user32.SetProcessDpiAwarenessContext(
+                ctypes.c_void_p(-4)):
+            DPI_WEG = "per Monitor (v2)"
+            return DPI_WEG
+    except Exception:
+        pass
+    try:
+        if ctypes.windll.shcore.SetProcessDpiAwareness(2) == 0:
+            DPI_WEG = "per Monitor"
+            return DPI_WEG
+    except Exception:
+        pass
+    try:
+        if ctypes.windll.user32.SetProcessDPIAware():
+            DPI_WEG = "systemweit"
+            return DPI_WEG
+    except Exception:
+        pass
+    DPI_WEG = "keiner – Windows rechnet weiter für uns um"
+    return DPI_WEG
+
+
+def windows_monitore() -> list:
+    """Alle Bildschirme mit ihren Rechtecken – für die Zahlenzeile.
+
+    Erst wenn man sieht, wie sie zueinander stehen, lässt sich eine
+    Verschiebung erklären, statt sie zu vermuten.
+    """
+    if not IST_WINDOWS:
+        return []
+    try:
+        import ctypes
+        from ctypes import wintypes
+        gefunden = []
+
+        class RECT(ctypes.Structure):
+            _fields_ = [("left", ctypes.c_long), ("top", ctypes.c_long),
+                        ("right", ctypes.c_long), ("bottom", ctypes.c_long)]
+
+        RUECK = ctypes.WINFUNCTYPE(ctypes.c_int, ctypes.c_void_p,
+                                   ctypes.c_void_p, ctypes.POINTER(RECT),
+                                   ctypes.c_double)
+
+        def sammeln(_h, _dc, rect, _daten):
+            r = rect.contents
+            gefunden.append((r.left, r.top, r.right - r.left,
+                             r.bottom - r.top))
+            return 1
+
+        ctypes.windll.user32.EnumDisplayMonitors(None, None, RUECK(sammeln), 0)
+        return gefunden
+    except Exception:
+        return []
+
+
 def windows_desktop() -> tuple:
     """Ursprung und Maße **aller** Bildschirme zusammen.
 
@@ -1452,6 +1533,8 @@ def bereich_waehlen(wurzel: tk.Tk) -> tuple | None:
             # fremden Rechner danebenliegen, und von hier aus lässt sich das
             # nicht nachmessen. Wer sie sieht, kann sie melden – das ist
             # ehrlicher, als den Anwender raten zu lassen.
+            schirme = " ".join("%d×%d@%d,%d" % (b, h, x, y)
+                               for x, y, b, h in windows_monitore()) or "?"
             flaeche.create_text(
                 klein.width() // 2, 50, fill="#8fd8a0",
                 font=("Helvetica", 11),
@@ -1459,6 +1542,10 @@ def bereich_waehlen(wurzel: tk.Tk) -> tuple | None:
                      "Vorschau %d×%d  ·  Faktor %.3f / %.3f"
                      % (b_breite, b_hoehe, d_breite, d_hoehe, u_x, u_y,
                         klein.width(), klein.height(), faktor_x, faktor_y))
+            flaeche.create_text(
+                klein.width() // 2, 70, fill="#8fd8a0",
+                font=("Helvetica", 11),
+                text="Bildschirme: %s  ·  DPI: %s" % (schirme, DPI_WEG))
         stand = {"x": 0, "y": 0, "rahmen": None, "fertig": None}
 
         def runter(e):
@@ -3593,6 +3680,10 @@ def handbuch_zeigen():
 
 
 def main():
+    # **Ganz vorn, vor jedem Fenster.** Danach nimmt Windows es nicht mehr
+    # an – und ohne das rechnet es hinter unserem Ruecken um.
+    dpi_weg = windows_dpi_beachten()
+
     # Apples mitgeliefertes Tk 8.5 zeichnet auf heutigem macOS nur ein weißes
     # Fenster und kann kein PNG. Lieber offen sagen, was fehlt, als den
     # Anwender vor eine leere Fläche setzen.
@@ -3607,6 +3698,15 @@ def main():
     # Was ein früherer Absturz an Ausschnitten liegen ließ, kommt jetzt weg.
     reste_aufraeumen()
     wurzel = tk.Tk()
+    if IST_WINDOWS:
+        # Jetzt rechnet niemand mehr fuer uns um – also muss die Schrift
+        # selbst mitwachsen, sonst steht auf einem 150-%-Bildschirm alles
+        # winzig da.
+        try:
+            wurzel.tk.call("tk", "scaling",
+                           wurzel.winfo_fpixels("1i") / 72.0)
+        except tk.TclError:
+            pass
     # Muss vor mainloop stehen; danach fragt macOS nicht mehr nach.
     wurzel.createcommand("::tk::mac::ShowHelp", handbuch_zeigen)
     app = LiveScanner(wurzel)

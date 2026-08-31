@@ -727,11 +727,22 @@ Auswahlfelds erscheint ein Fenster mit einem Abbild des Bildschirms, und
 darin zieht man. Es ist derselbe Weg, den auch der Mac bei „Bereich
 merken" nimmt.
 
-**Zur Bildschirmskalierung.** Läuft Windows auf 125 % oder 150 %, ist das
-Abbild etwas weicher als der echte Bildschirm. Der gezogene Rahmen trifft
-trotzdem genau das, was man gesehen hat – das war die wichtigere der
-beiden Eigenschaften. Sollte die Erkennung auf einem skalierten Bildschirm
-schwächeln, steht im Quelltext bei `schirmfoto` die Stellschraube.
+**Zur Bildschirmskalierung.** Der Scanner meldet sich bei Windows als
+**DPI-bewusst** an. Das klingt nach Kleinkram, ist aber die Grundlage
+dafür, dass der Rahmen trifft: Ohne diese Anmeldung liefert Windows
+*logische* Maße, während die Bildschirmaufnahme *echte* Bildpunkte
+liefert. Bei einem Bildschirm fällt das kaum auf; bei zweien mit
+unterschiedlicher Skalierung geht die eine Achse auf und die andere nicht.
+
+Gerechnet wird deshalb mit Kommazahlen (125 %, 150 %, 175 % sind keine
+ganzen Zahlen), über **alle** Bildschirme, und mit dem Ursprung des
+Desktops – ein Monitor links oder über dem ersten hat negative
+Koordinaten.
+
+Im Auswahlfenster stehen die Zahlen, mit denen gerechnet wird: Abbild,
+Desktopmaße, Vorschau, beide Faktoren, die Lage der Bildschirme und
+welcher DPI-Weg gegriffen hat. Wenn etwas nicht trifft, ist das der
+Anfang jeder Fehlersuche.
 
 ## Einbauen auf dem Mac
 

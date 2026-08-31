@@ -1343,6 +1343,25 @@ pruefe("ImageGrab.grab(all_screens=True)" in _roh_scan,
 pruefe("GetSystemMetrics" in _roh_scan,
        "und die Maße des ganzen Desktops werden erfragt")
 
+# **Der Kern der Sache.** Ohne DPI-Bewusstsein liefert Windows logische
+# Maße, während ImageGrab echte Bildpunkte liefert. Bei einem Bildschirm
+# fällt das kaum auf, bei zweien mit verschiedener Skalierung geht die
+# eine Achse auf und die andere nicht. Das trifft jeden, nicht nur einen
+# bestimmten Rechner – deshalb hier festgenagelt.
+pruefe("SetProcessDpiAwarenessContext" in _roh_scan,
+       "der Scanner meldet sich als DPI-bewusst an")
+pruefe("SetProcessDPIAware" in _roh_scan,
+       "mit Rückfallweg für ältere Windows-Fassungen")
+_ab_main_dpi = _roh_scan[_roh_scan.index("def main():"):]
+_vor_fenster = _ab_main_dpi[:_ab_main_dpi.index("tk.Tk()")]
+pruefe("windows_dpi_beachten()" in _vor_fenster,
+       "und zwar **vor** dem ersten Fenster – danach nimmt Windows es\n"
+       "       nicht mehr an")
+pruefe('"tk", "scaling"' in _roh_scan,
+       "dafür wächst die Schrift selbst mit, sonst steht alles winzig da")
+pruefe("EnumDisplayMonitors" in _roh_scan,
+       "und die Bildschirme werden aufgezählt – für die Zahlenzeile")
+
 # ==================================================== Der Windows-Weg
 # Der Mac-Weg bleibt unangetastet; fuer Windows stehen eigene Zweige
 # daneben. Sie lassen sich hier pruefen, indem die Weiche umgelegt wird -
