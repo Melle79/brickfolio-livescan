@@ -38,6 +38,7 @@ import io
 import json
 import os
 import queue
+import shutil
 import stat
 import subprocess
 import sys
@@ -69,7 +70,7 @@ from tkinter import ttk
 
 # Steht auch im Info.plist des Bündels. setup.py liest sie von hier,
 # damit sie nicht an zwei Stellen auseinanderläuft; pruefung.py wacht darüber.
-VERSION = "1.3.0"
+VERSION = "1.3.1"
 
 # Auf welchem System laufen wir? Der Mac-Weg bleibt unangetastet; fuer
 # Windows stehen daneben eigene Zweige. Alles andere (Linux) faellt auf den
@@ -81,6 +82,33 @@ IST_WINDOWS = sys.platform.startswith("win")
 # macOS-Name, Windows bricht damit ab (bad cursor spec). »crosshair« gibt
 # es auf beiden, das braucht keine Weiche.
 ZEIGEHAND = "hand2" if IST_WINDOWS else "pointinghand"
+
+
+def cloudflared_finden() -> str:
+    """Wo `cloudflared` liegt – oder "" wenn nirgends.
+
+    **Nicht auf den Suchpfad verlassen.** Ein Programm aus dem
+    Programme-Ordner erbt nicht die Pfade der Shell: `/opt/homebrew/bin`
+    steht dort nicht drin, und `cloudflared` galt deshalb als »nicht
+    installiert«, obwohl es lag. Am 31.08.2026 genau so passiert.
+
+    Zuerst die mitgelieferte Fassung – die ist immer da und passt zur App.
+    Danach die ueblichen Orte, damit eine selbst installierte auch gefunden
+    wird, und zuletzt der Suchpfad.
+    """
+    name = "cloudflared.exe" if IST_WINDOWS else "cloudflared"
+    orte = []
+    if getattr(sys, "frozen", None) == "macosx_app":
+        orte.append(os.path.normpath(os.path.join(
+            os.path.dirname(sys.executable), os.pardir, "Resources", name)))
+    elif getattr(sys, "frozen", False):          # PyInstaller unter Windows
+        orte.append(os.path.join(getattr(sys, "_MEIPASS", ""), name))
+    orte += [os.path.join(o, name) for o in
+             ("/opt/homebrew/bin", "/usr/local/bin", "/usr/bin", "/bin")]
+    for ort in orte:
+        if ort and os.path.isfile(ort) and os.access(ort, os.X_OK):
+            return ort
+    return shutil.which(name) or ""
 
 EINSTELLUNGEN = os.path.expanduser("~/.brickfolio-livescan.json")
 
@@ -263,9 +291,12 @@ class Instanz:
         jetzt = time.time()
         if self._cf_sitzung and jetzt < self._cf_sitzung_bis:
             return self._cf_sitzung
+        werkzeug = cloudflared_finden()
+        if not werkzeug:
+            return ""
         try:
             fertig = subprocess.run(
-                ["cloudflared", "access", "token", "-app=" + self.adresse],
+                [werkzeug, "access", "token", "-app=" + self.adresse],
                 capture_output=True, text=True, timeout=20,
                 creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
         except (OSError, subprocess.SubprocessError):
@@ -295,9 +326,13 @@ class Instanz:
         if not adresse.startswith("https://"):
             return (False, "Dafür braucht es eine https-Adresse. Im "
                            "Heimnetz steht ohnehin kein Cloudflare davor.")
+        werkzeug = cloudflared_finden()
+        if not werkzeug:
+            return (False, "»cloudflared« wurde nicht gefunden – weder "
+                           "mitgeliefert noch installiert.")
         try:
             fertig = subprocess.run(
-                ["cloudflared", "access", "login", adresse],
+                [werkzeug, "access", "login", adresse],
                 capture_output=True, text=True, timeout=300,
                 creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
         except FileNotFoundError:

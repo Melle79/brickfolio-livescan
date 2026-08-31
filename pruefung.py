@@ -1098,6 +1098,13 @@ pruefe("cf-access-client-id" not in _kopf2,
 _JWT = "kopf.inhalt.unterschrift"
 
 
+def _ist_cloudflared(befehl):
+    """Seit die App das Werkzeug selbst sucht, steht dort der volle Pfad –
+    »cloudflared« allein trifft nicht mehr."""
+    return bool(befehl) and os.path.basename(
+        str(befehl[0])).startswith("cloudflared")
+
+
 class _Fertig:
     """Was subprocess.run zurückgibt – so viel davon, wie hier gebraucht
     wird. `stderr` gehört dazu: cf_anmelden liest es, wenn keine Sitzung
@@ -1113,7 +1120,7 @@ _echt_run = livescan.subprocess.run
 
 def _falsches_cloudflared(befehl, **k):
     _rufe.append(befehl)
-    if befehl[:1] == ["cloudflared"]:
+    if _ist_cloudflared(befehl):
         return _Fertig(_JWT + "\n")
     return _echt_run(befehl, **k)
 
@@ -1151,7 +1158,7 @@ finally:
 
 # Was cloudflared ohne Anmeldung ausgibt, ist kein Token.
 def _keine_anmeldung(befehl, **k):
-    if befehl[:1] == ["cloudflared"]:
+    if _ist_cloudflared(befehl):
         return _Fertig("Please run: cloudflared access login ...", 1)
     return _echt_run(befehl, **k)
 
@@ -1177,7 +1184,7 @@ pruefe(not _geschafft and "https" in _m,
 
 
 def _kein_cloudflared(befehl, **k):
-    if befehl[:1] == ["cloudflared"]:
+    if _ist_cloudflared(befehl):
         raise FileNotFoundError(2, "No such file", "cloudflared")
     return _echt_run(befehl, **k)
 
@@ -1192,7 +1199,7 @@ finally:
 
 
 def _login_ohne_sitzung(befehl, **k):
-    if befehl[:2] == ["cloudflared", "access"]:
+    if _ist_cloudflared(befehl):
         # Anmeldung bricht ab: kein Token hinterher.
         return _Fertig("", 1) if befehl[2] == "token" else _Fertig("abgebrochen", 1)
     return _echt_run(befehl, **k)
@@ -1209,9 +1216,9 @@ finally:
 
 
 def _login_klappt(befehl, **k):
-    if befehl[:3] == ["cloudflared", "access", "login"]:
+    if _ist_cloudflared(befehl) and befehl[2] == "login":
         return _Fertig("Successfully fetched your token", 0)
-    if befehl[:3] == ["cloudflared", "access", "token"]:
+    if _ist_cloudflared(befehl) and befehl[2] == "token":
         return _Fertig(_JWT + "\n", 0)
     return _echt_run(befehl, **k)
 
@@ -1233,6 +1240,20 @@ pruefe("threading.Thread" in _ab_zugang,
        "der Knopf wartet in einem eigenen Faden")
 pruefe("f.after(0, fertig" in _ab_zugang,
        "und meldet das Ergebnis zurück in den Hauptfaden")
+
+# --- cloudflared finden, nicht hoffen ----------------------------------
+# Eine App aus dem Programme-Ordner erbt nicht die Pfade der Shell:
+# /opt/homebrew/bin steht dort nicht drin. »cloudflared« galt deshalb als
+# nicht installiert, obwohl es lag – am 31.08.2026 genau so passiert.
+pruefe("shutil.which" in _scan_roh_cf and "/opt/homebrew/bin" in _scan_roh_cf,
+       "die Suche schaut an den üblichen Orten nach, nicht nur im Suchpfad")
+pruefe("Resources" in _scan_roh_cf.split("def cloudflared_finden")[1][:900],
+       "und zuerst im eigenen Bündel – das ist immer da")
+_setup_cf = pathlib.Path(__file__).with_name("setup.py").read_text()
+pruefe("_cloudflared()" in _setup_cf,
+       "das Bündel nimmt cloudflared mit – niemand soll etwas nachinstallieren")
+pruefe(pathlib.Path(__file__).with_name("THIRD-PARTY.md").exists(),
+       "und die Lizenz liegt dabei, wie Apache-2.0 es verlangt")
 
 # ==================================================== Der Windows-Weg
 # Der Mac-Weg bleibt unangetastet; fuer Windows stehen eigene Zweige

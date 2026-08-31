@@ -30,6 +30,14 @@ def main():
         print("FEHL: das Handbuch fehlt im Ordner")
         return 1
 
+    # cloudflared muss mitreisen – sonst steht der Anwender vor dem Knopf
+    # und soll etwas nachinstallieren, was gerade vermieden werden sollte.
+    dabei = [os.path.join(ORDNER, "_internal", "cloudflared.exe"),
+             os.path.join(ORDNER, "cloudflared.exe")]
+    if not any(os.path.exists(d) for d in dabei):
+        print("FEHL: cloudflared.exe fehlt im Ordner")
+        return 1
+
     p = subprocess.Popen([EXE], stdout=subprocess.PIPE,
                          stderr=subprocess.STDOUT, text=True)
     time.sleep(15)

@@ -123,12 +123,23 @@ jobs:
           PYTHONIOENCODING: "utf-8"
         run: python pruefung.py
 
+      - name: cloudflared holen
+        # Kommt mit ins Paket, damit niemand etwas nachinstallieren muss,
+        # um sich hinter Cloudflare Access anzumelden. Apache-2.0, die
+        # Lizenz liegt als THIRD-PARTY.md dabei. Direkt von Cloudflare.
+        run: >
+          Invoke-WebRequest -UseBasicParsing
+          -Uri "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-windows-amd64.exe"
+          -OutFile "cloudflared.exe"
+
       - name: Bündeln
         run: >
           pyinstaller --noconfirm --clean --windowed
           --name "Brickfolio Live-Scanner"
           --icon livescan.ico
           --add-data "README.md;."
+          --add-data "THIRD-PARTY.md;."
+          --add-binary "cloudflared.exe;."
           livescan.py
 
       - name: Beweisen, dass es startet

@@ -667,11 +667,16 @@ Unter **Zugang …** steht **🌐 Über Cloudflare anmelden …**. Ein Klick, de
 Browser öffnet sich, ihr meldet euch **wie gewohnt** mit E-Mail und
 Zugangscode an — fertig. Danach auf *Anmelden*.
 
-Dafür muss einmalig `cloudflared` auf dem Rechner liegen:
+**`cloudflared` reist im Paket mit** – es ist nichts nachzuinstallieren.
+Der Scanner sucht zuerst die mitgelieferte Fassung, dann eine selbst
+installierte an den üblichen Orten.
 
-    brew install cloudflared                       # macOS
+> Das war nicht immer so. Zuerst wurde nur der Suchpfad befragt – und ein
+> Programm aus dem Programme-Ordner erbt nicht die Pfade der Shell.
+> `/opt/homebrew/bin` steht dort nicht drin, und `cloudflared` galt als
+> nicht installiert, obwohl es lag.
 
-Fehlt es, sagt der Knopf genau das. Von Hand ginge es auch:
+Von Hand ginge es auch:
 
     cloudflared access login https://brickfolio.example
 

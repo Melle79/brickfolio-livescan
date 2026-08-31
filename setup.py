@@ -14,12 +14,33 @@ also lief es genau auf einem Rechner.
 """
 import os
 import pathlib
+import shutil
 import re
 
 from setuptools import setup
 
 # Aus livescan.py *gelesen*, nicht importiert: ein Import zöge tkinter mit,
 # und py2app soll setup.py auch dort ausführen können, wo kein Tk steht.
+def _cloudflared():
+    """`cloudflared` mitliefern, wenn es hier liegt.
+
+    Wer hinter Cloudflare Access sitzt, soll auf den Knopf druecken
+    koennen, ohne vorher etwas zu installieren. Das Programm ist unter
+    Apache-2.0 lizenziert, darf also mitreisen; die Lizenz liegt als
+    THIRD-PARTY.md daneben.
+
+    Fehlt es beim Bauen, wird trotzdem gebaut - der Scanner sucht dann
+    eine selbst installierte Fassung und sagt sonst, wo es die gibt.
+    Abbrechen waere hier zu streng: Der Dienst-Token-Weg braucht es nicht.
+    """
+    weg = shutil.which("cloudflared") or "/opt/homebrew/bin/cloudflared"
+    if os.path.isfile(weg):
+        return [os.path.realpath(weg)]
+    print("Hinweis: cloudflared liegt nicht vor – die App wird ohne "
+          "gebaut. (brew install cloudflared)")
+    return []
+
+
 def _tcl_bibliotheken():
     """Die beiden Skript-Ordner von Tcl und Tk, oder ein klarer Abbruch.
 
@@ -48,7 +69,8 @@ setup(
     # livescan.py zeigt beim Start per TCL_LIBRARY/TK_LIBRARY hierher.
     # Das Handbuch reist mit: Der Hilfe-Eintrag im Menue oeffnet es, und
     # das soll auch ohne Netz und ohne Zugang zum privaten Repo gehen.
-    data_files=[("lib", _tcl_bibliotheken()), ("", ["README.md"])],
+    data_files=[("lib", _tcl_bibliotheken()),
+                ("", ["README.md", "THIRD-PARTY.md"] + _cloudflared())],
     options={"py2app": {
         "iconfile": "livescan.icns",
         # Tkinter kommt nicht von allein mit – py2app findet es nur, wenn
