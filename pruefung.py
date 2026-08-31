@@ -98,6 +98,15 @@ def abschnitt(titel):
     print("\n\033[1m%s\033[0m" % titel)
 
 
+# Pillow gibt es nur dort, wo es gebraucht wird: unter Windows im Paket,
+# hier höchstens in der Baustube. Fehlt es, entfallen die Proben, die es
+# brauchen – sichtbar, nicht stillschweigend.
+try:
+    from PIL import Image as _PIL
+except ImportError:
+    _PIL = None
+
+
 def pruefe(bedingung, text):
     bilanz["gut" if bedingung else "schlecht"] += 1
     print(("   ok   " if bedingung else "  FEHL  ") + text)
@@ -1362,6 +1371,85 @@ pruefe('"tk", "scaling"' in _roh_scan,
 pruefe("EnumDisplayMonitors" in _roh_scan,
        "und die Bildschirme werden aufgezählt – für die Zahlenzeile")
 
+# ============================ Trifft der Ausschnitt wirklich dieselbe Stelle?
+# Die Rechnung oben prüft sich selbst – aber ob sie auch zum Betriebssystem
+# passt, sagt nur ein Versuch: ganzen Schirm aufnehmen, einen Bereich daraus
+# holen, beides vergleichen. Braucht Pillow und die Freigabe für
+# Bildschirmaufnahmen; fehlt eines davon, entfällt die Probe sichtbar.
+abschnitt("9e. Der Ausschnitt sitzt wirklich dort")
+
+if _PIL is None:
+    print("     (Pillow fehlt – der Vergleich am echten Bildschirm entfällt)")
+else:
+    _voll = os.path.join(tempfile.gettempdir(), "pruefung-voll.png")
+    if not livescan.schirmfoto(_voll):
+        print("     (keine Bildschirmaufnahme möglich – Probe entfällt)")
+    else:
+        from PIL import ImageChops as _Chops
+        with _PIL.open(_voll) as _b:
+            _bb, _bh = _b.size
+        if livescan.IST_WINDOWS:
+            _ux, _uy, _db, _dh = livescan.windows_desktop()
+        else:
+            _ux, _uy, _db, _dh = livescan.mac_desktop()
+        pruefe(_db > 0 and _dh > 0,
+               "die Maße aller Bildschirme lassen sich erfragen")
+
+        _ber = (_ux + 600, _uy + 400, 400, 300)
+        _s = _bb / float(_db)
+
+        def _abstand():
+            """Wie weit Ausschnitt und Vollbild auseinanderliegen.
+
+            **Beide Aufnahmen aus demselben Anlauf.** Ein einmal
+            aufgenommenes Vollbild veraltet: Geht zwischendurch ein Fenster
+            auf, weichen alle folgenden Vergleiche ab, und Wiederholen
+            hilft nicht mehr.
+            """
+            if not livescan.schirmfoto(_voll):
+                return None
+            roh = livescan.bereich_aufnehmen(_ber)
+            if not roh:
+                return None
+            with _PIL.open(io.BytesIO(roh)) as a:
+                aus_bild = a.convert("RGB")
+                with _PIL.open(_voll) as v:
+                    schnitt = v.crop((
+                        int((_ber[0] - _ux) * _s), int((_ber[1] - _uy) * _s),
+                        int((_ber[0] - _ux + _ber[2]) * _s),
+                        int((_ber[1] - _uy + _ber[3]) * _s))).convert("RGB")
+                d = _Chops.difference(schnitt, aus_bild.resize(schnitt.size))
+                return sum(
+                    sum(d.split()[k].histogram()[i] * i for i in range(256))
+                    for k in range(3)) / float(schnitt.size[0]
+                                               * schnitt.size[1] * 3)
+
+        # **Dreimal, und der beste Versuch zählt.** Zwischen Vollbild und
+        # Ausschnitt vergeht Zeit, und der Bildschirm steht nicht still –
+        # eine Uhr, ein blinkender Cursor, eine scrollende Ausgabe. Sitzt
+        # die Rechnung richtig, liegt der Abstand bei 1; sitzt sie falsch,
+        # bei 69. Zwischen diesen beiden Zahlen ist so viel Luft, dass ein
+        # Wiederholen die Aussage nicht verwässert.
+        _versuche = [_abstand() for _ in range(3)]
+        pruefe(any(v is not None for v in _versuche),
+               "ein Bereich daraus lässt sich aufnehmen")
+        _mittel = min(v for v in _versuche if v is not None)
+        print("     mittlere Abweichung: %.1f von 255  (aus %s)"
+              % (_mittel, ", ".join("%.1f" % v for v in _versuche
+                                    if v is not None)))
+        # **25 ist kein Kompromiss, sondern der Abstand zwischen zwei
+        # Welten.** Sitzt die Rechnung, liegt der Wert bei 1 bis 5 – der
+        # Rest ist eine wandernde Uhr. Sitzt sie um 200 Punkte daneben,
+        # liegt er bei 69. Zwischen 5 und 69 ist so viel Luft, dass ein
+        # unruhiger Bildschirm keinen Fehlalarm auslösen kann.
+        pruefe(_mittel < 25,
+               "der aufgenommene Bereich zeigt dieselbe Stelle wie das\n"
+               "       Vollbild – die Umrechnung passt zum Betriebssystem")
+        try:
+            os.remove(_voll)
+        except OSError:
+            pass
+
 # ==================================================== Der Windows-Weg
 # Der Mac-Weg bleibt unangetastet; fuer Windows stehen eigene Zweige
 # daneben. Sie lassen sich hier pruefen, indem die Weiche umgelegt wird -
@@ -1383,11 +1471,6 @@ pruefe("ImageGrab" in _scan_roh, "und die Bildschirmaufnahme")
 # Aufbau des Fensters, also sofort und vollstaendig.
 pruefe('cursor="pointinghand"' not in _scan_roh,
        "kein mac-eigener Mauszeiger fest verdrahtet")
-
-try:
-    from PIL import Image as _PIL
-except ImportError:
-    _PIL = None
 
 if _PIL is None:
     print("     (Pillow fehlt – die Bildproben des Windows-Wegs bleiben aus)")

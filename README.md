@@ -633,6 +633,21 @@ ein paar Sekunden durch und sagt am Ende, was durchgefallen ist.
 
 MIT, wie Brickfolio selbst.
 
+## Mit mehreren Bildschirmen
+
+Beide Systeme nehmen den Rahmen über **alle** Bildschirme auf. Läuft der
+Stream auf dem zweiten Monitor, lässt er sich genauso einrahmen und
+merken wie auf dem ersten.
+
+Gerechnet wird mit dem Ursprung des Gesamtbilds: Ein Monitor **links** oder
+**über** dem Hauptbildschirm hat negative Koordinaten. Und mit Kommazahlen,
+denn Bildschirmskalierung ist selten eine ganze Zahl.
+
+> Auf dem Mac wird dafür der Finder nach den Gesamtmaßen gefragt. Beim
+> ersten Mal fragt macOS nach der Erlaubnis dafür. Wer sie verweigert,
+> bekommt weiterhin nur den Hauptbildschirm zu sehen — alles andere
+> funktioniert unverändert.
+
 ## Wenn die Instanz hinter Cloudflare Access steht
 
 Dann kommt auf jede Anfrage eine **Anmeldeseite** statt Daten. Die kann

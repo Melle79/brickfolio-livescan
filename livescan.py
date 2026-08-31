@@ -70,7 +70,7 @@ from tkinter import ttk
 
 # Steht auch im Info.plist des Bündels. setup.py liest sie von hier,
 # damit sie nicht an zwei Stellen auseinanderläuft; pruefung.py wacht darüber.
-VERSION = "1.4.0"
+VERSION = "1.5.0"
 
 # Auf welchem System laufen wir? Der Mac-Weg bleibt unangetastet; fuer
 # Windows stehen daneben eigene Zweige. Alles andere (Linux) faellt auf den
@@ -1214,6 +1214,33 @@ def _multipart(felder: dict, grenze: str) -> bytes:
 DPI_WEG = "noch nicht gesetzt"
 
 
+def mac_desktop() -> tuple:
+    """Ursprung und Maße **aller** Bildschirme – in Punkten.
+
+    Über den Finder, der die Vereinigung aller Schirme als »Fenster des
+    Schreibtischs« kennt. Das ist der einzige Weg, der ohne Fremdbibliothek
+    und ohne Zusatzrechte auskommt.
+
+    Klappt es nicht – etwa weil die Freigabe für Kurzbefehle fehlt –, bleibt
+    es beim Hauptbildschirm. Dann sieht man im Auswahlfenster eben nur
+    diesen, statt gar nichts.
+
+    (x, y, breite, hoehe) oder (0, 0, 0, 0).
+    """
+    try:
+        fertig = subprocess.run(
+            ["osascript", "-e",
+             "tell application \"Finder\" to get bounds of window of desktop"],
+            capture_output=True, text=True, timeout=15)
+        teile = [int(s.strip()) for s in fertig.stdout.strip().split(",")]
+        if len(teile) == 4 and teile[2] > teile[0] and teile[3] > teile[1]:
+            return (teile[0], teile[1], teile[2] - teile[0],
+                    teile[3] - teile[1])
+    except (subprocess.SubprocessError, OSError, ValueError):
+        pass
+    return (0, 0, 0, 0)
+
+
 def windows_dpi_beachten() -> str:
     """Windows sagen, dass wir mit echten Bildpunkten rechnen können.
 
@@ -1348,8 +1375,17 @@ def schirmfoto(pfad: str) -> bool:
             bild = ImageGrab.grab(all_screens=True)
             bild.save(pfad, format="PNG")
         else:
-            subprocess.run(["screencapture", "-x", "-t", "png", "-D", "1",
-                            pfad], check=False, timeout=60,
+            # **Über alle Bildschirme, wenn sich ihre Maße erfragen
+            # lassen.** Mit `-D 1` käme nur der Hauptbildschirm – und wer
+            # den Stream auf dem zweiten Monitor laufen hat, könnte ihn
+            # gar nicht einrahmen. Ohne `-D` legt screencapture bei
+            # mehreren Monitoren mehrere Dateien an, keine heißt wie
+            # erwartet; deshalb der Umweg über `-R` und die Gesamtmaße.
+            x, y, breite, hoehe = mac_desktop()
+            zusatz = (["-R", "%d,%d,%d,%d" % (x, y, breite, hoehe)]
+                      if breite > 0 else ["-D", "1"])
+            subprocess.run(["screencapture", "-x", "-t", "png"] + zusatz
+                           + [pfad], check=False, timeout=60,
                            stdout=subprocess.DEVNULL,
                            stderr=subprocess.DEVNULL)
         return os.path.isfile(pfad) and os.path.getsize(pfad) > 0
@@ -1496,23 +1532,33 @@ def bereich_waehlen(wurzel: tk.Tk) -> tuple | None:
             # Von Vorschaupunkt zu Bildschirmpunkt – als Kommazahl, und je
             # Richtung getrennt, falls die Vorschau nicht exakt proportional
             # gerundet wurde.
-            faktor_x = d_breite / float(v_breite)
-            faktor_y = d_hoehe / float(v_hoehe)
             ursprung = (u_x, u_y)
         else:
             # Tk kann PNG von sich aus – dafür braucht es keine Bibliothek.
             bild = tk.PhotoImage(file=roh_pfad)
-            # Auf Retina hat das Abbild doppelt so viele Bildpunkte wie der
-            # Bildschirm Punkte hat. Und damit das Fenster auf den Schirm
-            # passt, wird zusätzlich verkleinert – beides steckt in `teiler`.
-            teiler = max(1, round(bild.width() / breite_pkt))
-            passt = 1
-            while bild.width() // (teiler * passt) > breite_pkt - 80 \
-                    or bild.height() // (teiler * passt) > hoehe_pkt - 140:
-                passt += 1
-            klein = bild.subsample(teiler * passt)
-            faktor_x = faktor_y = float(passt)
-            ursprung = (0, 0)
+            b_breite, b_hoehe = bild.width(), bild.height()
+            u_x, u_y, d_breite, d_hoehe = mac_desktop()
+            if d_breite <= 0:
+                # Der Finder gab nichts her – dann zeigt `schirmfoto` den
+                # Hauptbildschirm, und der ist auch die Rechengrundlage.
+                u_x, u_y = 0, 0
+                d_breite, d_hoehe = breite_pkt, hoehe_pkt
+            # Tk verkleinert nur ganzzahlig. Das macht nichts: Wie viel es
+            # am Ende wirklich war, steht in der Größe der Vorschau, und
+            # daraus wird unten der Faktor als Kommazahl gebildet.
+            n = 1
+            while b_breite // n > breite_pkt - 80 \
+                    or b_hoehe // n > hoehe_pkt - 140:
+                n += 1
+            klein = bild.subsample(n)
+            ursprung = (u_x, u_y)
+
+        # **Aus der wirklichen Größe der Vorschau**, nicht aus dem, was
+        # beim Verkleinern beabsichtigt war. Beides kann um einen Punkt
+        # auseinanderliegen, und ein gerundeter Faktor verschiebt den
+        # Ausschnitt über die ganze Breite hinweg.
+        faktor_x = d_breite / float(klein.width())
+        faktor_y = d_hoehe / float(klein.height())
 
         flaeche = tk.Canvas(fenster, width=klein.width(),
                             height=klein.height(), highlightthickness=0)
