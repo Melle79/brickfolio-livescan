@@ -1264,6 +1264,33 @@ pruefe("_cloudflared()" in _setup_cf,
 pruefe(pathlib.Path(__file__).with_name("THIRD-PARTY.md").exists(),
        "und die Lizenz liegt dabei, wie Apache-2.0 es verlangt")
 
+# --- Auch das Katalogbild muss durch Cloudflare -------------------------
+# Es wurde mit einem nackten urlopen geholt – ohne Kennung, ohne
+# Dienst-Token, ohne Sitzung. Hinter Cloudflare Access blieb es leer, und
+# das `except` machte daraus ein stilles »kein Katalogbild«. Am 31.08.2026
+# genau so aufgetreten, nachdem der Scan selbst längst durchging.
+_bild_kopf = {}
+
+
+def _bild_oeffner(antrag, timeout=None):
+    _bild_kopf.update(dict(antrag.headers))
+    raise urllib.error.HTTPError(antrag.full_url, 500, "egal", {}, None)
+
+
+_echt_open = livescan._OEFFNER.open
+livescan._OEFFNER.open = _bild_oeffner
+try:
+    livescan.Instanz("https://beispiel.test", "tok", "kennung",
+                     "geheim").katalogbild("/bild.jpg")
+finally:
+    livescan._OEFFNER.open = _echt_open
+
+_bk = {k.lower(): v for k, v in _bild_kopf.items()}
+pruefe(_bk.get("cf-access-client-id") == "kennung",
+       "das Katalogbild trägt den Dienst-Token mit")
+pruefe("Brickfolio-Live-Scanner/" in _bk.get("user-agent", ""),
+       "und die eigene Kennung – sonst blockt schon der Bot-Schutz")
+
 # ==================================================== Der Windows-Weg
 # Der Mac-Weg bleibt unangetastet; fuer Windows stehen eigene Zweige
 # daneben. Sie lassen sich hier pruefen, indem die Weiche umgelegt wird -

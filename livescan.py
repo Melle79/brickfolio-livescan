@@ -70,7 +70,7 @@ from tkinter import ttk
 
 # Steht auch im Info.plist des Bündels. setup.py liest sie von hier,
 # damit sie nicht an zwei Stellen auseinanderläuft; pruefung.py wacht darüber.
-VERSION = "1.3.1"
+VERSION = "1.3.2"
 
 # Auf welchem System laufen wir? Der Mac-Weg bleibt unangetastet; fuer
 # Windows stehen daneben eigene Zweige. Alles andere (Linux) faellt auf den
@@ -209,11 +209,10 @@ class Instanz:
         # blocked access based on your browser's signature«. Mit Namen und
         # Fassung ist die Anfrage zuordenbar, und der Betreiber kann sie
         # gezielt durchlassen.
-        kopf = {"Accept": "application/json",
-                "User-Agent": "Brickfolio-Live-Scanner/%s" % VERSION}
+        kopf = {"Accept": "application/json"}
+        kopf.update(self._grundkopf())
         if self.token:
             kopf["Authorization"] = "Bearer " + self.token
-        kopf.update(self._cf_kopfzeilen())
         koerper = None
         if felder is not None:
             grenze = "----brickfolio" + uuid.uuid4().hex
@@ -254,6 +253,19 @@ class Instanz:
             raise Fehler("Unerwartete Antwort der Instanz") from None
 
     # --------------------------------------------------- Cloudflare Access
+    def _grundkopf(self) -> dict:
+        """Was **jede** Anfrage nach draußen braucht.
+
+        Eigene Kennung und, falls noetig, der Weg an Cloudflare Access
+        vorbei. Frueher stand das nur in `_anfrage` - und das Katalogbild,
+        das mit einem nackten `urlopen` geholt wurde, blieb hinter
+        Cloudflare leer. Der Fehler fiel nicht auf, weil das `except` ihn
+        zu einem stillen »kein Katalogbild« machte.
+        """
+        kopf = {"User-Agent": "Brickfolio-Live-Scanner/%s" % VERSION}
+        kopf.update(self._cf_kopfzeilen())
+        return kopf
+
     def _cf_kopfzeilen(self) -> dict:
         """Was eine Anfrage braucht, um an Cloudflare Access vorbeizukommen.
 
@@ -475,8 +487,14 @@ class Instanz:
         """Das Referenzbild holen – über den Weiterleiter der Instanz.
 
         Nicht direkt von BrickLink: Die Instanz hat es ohnehin schon im
-        Speicher, und so geht von hier aus nichts nach außen. Ein Login
-        braucht der Weg nicht, ein `<img>` trägt ja auch keinen Token.
+        Speicher, und so geht von hier aus nichts nach außen. Einen Login
+        der **Instanz** braucht der Weg nicht – ein `<img>` trägt ja auch
+        keinen Token.
+
+        **Cloudflare Access sitzt aber davor**, und das interessiert sich
+        nicht dafür, ob dahinter ein Login verlangt wird. Deshalb geht der
+        Grundkopf auch hier mit; ohne ihn blieb das Bild leer, und das
+        `except` machte daraus ein stilles »kein Katalogbild«.
         """
         if not adresse:
             return None
@@ -486,10 +504,11 @@ class Instanz:
                + urllib.parse.quote(adresse, safe="")
                if adresse.startswith(("http://", "https://"))
                else self.adresse + adresse)
+        antrag = urllib.request.Request(weg, headers=self._grundkopf())
         try:
-            with urllib.request.urlopen(weg, timeout=30) as antwort:
+            with _OEFFNER.open(antrag, timeout=30) as antwort:
                 return antwort.read()
-        except (urllib.error.URLError, OSError):
+        except (urllib.error.URLError, urllib.error.HTTPError, OSError):
             return None
 
     def foto_anhaengen(self, t: dict, bild: bytes) -> None:
