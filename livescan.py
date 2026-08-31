@@ -70,7 +70,7 @@ from tkinter import ttk
 
 # Steht auch im Info.plist des Bündels. setup.py liest sie von hier,
 # damit sie nicht an zwei Stellen auseinanderläuft; pruefung.py wacht darüber.
-VERSION = "1.3.3"
+VERSION = "1.3.4"
 
 # Auf welchem System laufen wir? Der Mac-Weg bleibt unangetastet; fuer
 # Windows stehen daneben eigene Zweige. Alles andere (Linux) faellt auf den
@@ -1436,11 +1436,29 @@ def bereich_waehlen(wurzel: tk.Tk) -> tuple | None:
         flaeche = tk.Canvas(fenster, width=klein.width(),
                             height=klein.height(), highlightthickness=0)
         flaeche.pack()
+        # Ausdrücklich in die linke obere Ecke des Hauptbildschirms. Sonst
+        # entscheidet das Fenstersystem, wo das Fenster landet – und wenn
+        # es dabei über den Rand hinausragt, sieht man einen Ausschnitt der
+        # Vorschau und zieht den Rahmen an der falschen Stelle.
+        fenster.geometry("+0+0")
         flaeche.create_image(0, 0, anchor="nw", image=klein)
         flaeche.create_text(klein.width() // 2, 26, fill="#39b54a",
                             font=("Helvetica", 15, "bold"),
                             text="Rahmen um das Videobild ziehen  ·  "
                                  "Esc bricht ab")
+        if IST_WINDOWS:
+            # **Die Zahlen sichtbar machen.** Bei mehreren Bildschirmen mit
+            # unterschiedlicher Skalierung kann diese Rechnung auf einem
+            # fremden Rechner danebenliegen, und von hier aus lässt sich das
+            # nicht nachmessen. Wer sie sieht, kann sie melden – das ist
+            # ehrlicher, als den Anwender raten zu lassen.
+            flaeche.create_text(
+                klein.width() // 2, 50, fill="#8fd8a0",
+                font=("Helvetica", 11),
+                text="Abbild %d×%d  ·  Desktop %d×%d ab (%d,%d)  ·  "
+                     "Vorschau %d×%d  ·  Faktor %.3f / %.3f"
+                     % (b_breite, b_hoehe, d_breite, d_hoehe, u_x, u_y,
+                        klein.width(), klein.height(), faktor_x, faktor_y))
         stand = {"x": 0, "y": 0, "rahmen": None, "fertig": None}
 
         def runter(e):
