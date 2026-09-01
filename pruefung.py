@@ -29,6 +29,7 @@ import urllib.error
 import tempfile
 import time
 import tkinter as tk
+from tkinter import ttk
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import livescan
@@ -377,6 +378,52 @@ pruefe("winfo_rgb" in _roh_farben,
 pruefe("farben_setzen(wurzel)"
        in _roh_farben[:_roh_farben.index("self._bauen()")],
        "und die Palette wird **vor** dem Aufbau der Oberfläche gesetzt")
+
+# --- Umschalten im laufenden Betrieb -----------------------------------
+# macOS wechselt abends von selbst auf dunkel. Der Fenstergrund folgt
+# sofort – die Schriftfarben nicht, die stehen fest in den Bedienelementen.
+# Vorher stand das als Einschränkung im Quelltext (»greift beim nächsten
+# Start«). Eine dokumentierte Einschränkung ist keine Lösung, wenn sie
+# jeden Abend zuschlägt.
+_ww = tk.Tk()
+_ww.withdraw()
+livescan.farben_setzen(_ww, dunkel=False)
+_wr = ttk.Frame(_ww)
+_wr.pack()
+_l_ttk = ttk.Label(_wr, text="Meta", foreground=livescan.FARBEN["leise"])
+_l_tk = tk.Label(_wr, text="Sets", foreground=livescan.FARBEN["matt"])
+_l_gruen = tk.Label(_wr, text="grün", foreground="#1a7f37")
+_leinwand = tk.Canvas(_wr, width=40, height=20)
+_stueck = _leinwand.create_text(5, 5, text="x",
+                                fill=livescan.FARBEN["still"])
+for _x in (_l_ttk, _l_tk, _l_gruen, _leinwand):
+    _x.pack()
+_ww.update_idletasks()
+
+_echt_dunkel = livescan.grund_ist_dunkel
+livescan.grund_ist_dunkel = lambda _w: True
+try:
+    pruefe(livescan.farben_auffrischen(_ww) is True,
+           "der Wechsel auf Nachtmodus wird bemerkt")
+    _ww.update_idletasks()
+    pruefe(str(_l_ttk.cget("foreground")) == "#9a9a9a",
+           "eine ttk-Beschriftung färbt sich mit")
+    pruefe(str(_l_tk.cget("foreground")) == "#a8a8a8",
+           "eine gewöhnliche auch")
+    pruefe(str(_leinwand.itemcget(_stueck, "fill")) == "#b4b4b4",
+           "und Text auf einer Leinwand ebenfalls – der hängt nicht am\n"
+           "       Bedienelement und wäre sonst zurückgeblieben")
+    pruefe(str(_l_gruen.cget("foreground")) == "#1a7f37",
+           "was nicht aus der Palette stammt, bleibt unangetastet")
+    pruefe(livescan.farben_auffrischen(_ww) is False,
+           "beim zweiten Mal gibt es nichts mehr zu tun")
+finally:
+    livescan.grund_ist_dunkel = _echt_dunkel
+_ww.destroy()
+
+_roh_takt = pathlib.Path(livescan.__file__).read_text()
+pruefe("farben_auffrischen(self.wurzel)" in _roh_takt,
+       "und der laufende Takt sieht regelmäßig nach")
 
 # ==================================================== 4. Wunschliste
 abschnitt("4. Wunschliste: Blinken und Ton")

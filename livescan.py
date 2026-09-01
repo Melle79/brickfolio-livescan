@@ -70,7 +70,7 @@ from tkinter import ttk
 
 # Steht auch im Info.plist des Bündels. setup.py liest sie von hier,
 # damit sie nicht an zwei Stellen auseinanderläuft; pruefung.py wacht darüber.
-VERSION = "1.5.1"
+VERSION = "1.5.2"
 
 # Auf welchem System laufen wir? Der Mac-Weg bleibt unangetastet; fuer
 # Windows stehen daneben eigene Zweige. Alles andere (Linux) faellt auf den
@@ -1260,11 +1260,73 @@ def grund_ist_dunkel(wurzel) -> bool:
     return (0.299 * r + 0.587 * g + 0.114 * b) / 65535.0 < 0.5
 
 
+_MODUS = {"dunkel": None}
+
+
 def farben_setzen(wurzel, dunkel=None) -> bool:
     """Die Palette an den Grund anpassen. Gibt zurück, ob dunkel."""
     dunkel = grund_ist_dunkel(wurzel) if dunkel is None else dunkel
     FARBEN.update(_FARBEN_DUNKEL if dunkel else _FARBEN_HELL)
+    _MODUS["dunkel"] = dunkel
     return dunkel
+
+
+def _umfaerben(widget, umschlag: dict) -> int:
+    """Jede Schriftfarbe aus dem alten Satz durch die neue ersetzen.
+
+    Ohne Verzeichnis der Bedienelemente: Es wird schlicht nachgesehen,
+    welche Farbe dort steht. Was nicht aus der Palette stammt – Grün,
+    Wunschgelb, Weiß auf farbigem Grund – bleibt unangetastet, weil es im
+    Umschlag nicht vorkommt.
+    """
+    geaendert = 0
+    for kind in widget.winfo_children():
+        for feld in ("foreground", "fill"):
+            try:
+                jetzt = str(kind.cget(feld))
+            except Exception:
+                continue
+            if jetzt in umschlag:
+                try:
+                    kind.config(**{feld: umschlag[jetzt]})
+                    geaendert += 1
+                except Exception:
+                    pass
+        # Text auf einer Leinwand hängt nicht am Bedienelement.
+        try:
+            for stueck in kind.find_all():
+                jetzt = str(kind.itemcget(stueck, "fill"))
+                if jetzt in umschlag:
+                    kind.itemconfigure(stueck, fill=umschlag[jetzt])
+                    geaendert += 1
+        except Exception:
+            pass
+        geaendert += _umfaerben(kind, umschlag)
+    return geaendert
+
+
+def farben_auffrischen(wurzel) -> bool:
+    """Hat der Rechner den Modus gewechselt? Dann alles umfärben.
+
+    **Warum das nötig ist.** macOS schaltet abends von selbst auf dunkel.
+    Der Grund des Fensters folgt sofort – die Schriftfarben nicht, die
+    stehen ja fest in den Bedienelementen. Ergebnis: dunkler Grund, helle
+    Palette von vorhin, und Nummer, Quote und Preise sind wieder weg.
+
+    Genau das stand vorher als Einschränkung im Quelltext (»greift beim
+    nächsten Start«). Eine dokumentierte Einschränkung ist keine Lösung,
+    wenn sie jeden Abend zuschlägt.
+    """
+    jetzt_dunkel = grund_ist_dunkel(wurzel)
+    if jetzt_dunkel == _MODUS["dunkel"]:
+        return False
+    vorher = dict(FARBEN)
+    farben_setzen(wurzel, dunkel=jetzt_dunkel)
+    umschlag = {vorher[rolle]: FARBEN[rolle] for rolle in FARBEN
+                if vorher[rolle] != FARBEN[rolle]}
+    if umschlag:
+        _umfaerben(wurzel, umschlag)
+    return True
 
 
 _FARBEN_HELL = dict(FARBEN)
@@ -2651,6 +2713,19 @@ class LiveScanner:
         # Der Takt läuft ohnehin; ein paar Abfragen alle 120 ms fallen nicht
         # ins Gewicht, und damit stimmt es immer.
         self._scroll_nachfuehren()
+        # Alle rund zwei Sekunden nachsehen, ob der Rechner inzwischen auf
+        # Nachtmodus umgeschaltet hat. Öfter braucht es nicht – niemand
+        # merkt zwei Sekunden –, und `winfo_rgb` ist billig genug, dass es
+        # auch bei jedem Takt nicht auffiele.
+        self._farbtakt = getattr(self, "_farbtakt", 0) + 1
+        if self._farbtakt >= 16:
+            self._farbtakt = 0
+            try:
+                if farben_auffrischen(self.wurzel):
+                    self.melden("Ansicht an den Nacht- bzw. Tagmodus "
+                                "angepasst.")
+            except tk.TclError:
+                pass
         self.wurzel.after(120, self._post_abarbeiten)
 
     # ------------------------------------------------------------ Zugang
