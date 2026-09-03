@@ -70,7 +70,7 @@ from tkinter import ttk
 
 # Steht auch im Info.plist des Bündels. setup.py liest sie von hier,
 # damit sie nicht an zwei Stellen auseinanderläuft; pruefung.py wacht darüber.
-VERSION = "1.5.2"
+VERSION = "1.6.0"
 
 # Auf welchem System laufen wir? Der Mac-Weg bleibt unangetastet; fuer
 # Windows stehen daneben eigene Zweige. Alles andere (Linux) faellt auf den
@@ -1807,6 +1807,13 @@ class LiveScanner:
         self._bauen()
         self._hoehe_festlegen()
         wurzel.after(120, self._post_abarbeiten)
+        # Im Hintergrund und nur einmal je Start. Wer nicht gefragt werden
+        # will, setzt "updates_pruefen": false in die Einstellungsdatei –
+        # dafür gibt es keinen Haken, weil die Zeile ohnehin nur erscheint,
+        # wenn es wirklich etwas Neues gibt.
+        if self.daten.get("updates_pruefen", True):
+            threading.Thread(target=self._update_pruefen,
+                             daemon=True).start()
         if not self.instanz.token:
             wurzel.after(300, self.zugang_zeigen)
 
@@ -2209,7 +2216,26 @@ class LiveScanner:
                    ).pack(side="left")
         ttk.Label(fuss, text="⏎ löst auch aus", foreground=FARBEN["matt"]
                   ).pack(side="right")
+        # **Steht nur da, wenn es etwas zu sagen gibt.** Ohne neuere
+        # Fassung bleibt die Zeile leer und nimmt keinen Platz weg – das
+        # gewohnte Bild ändert sich nicht.
+        self.update_hinweis = ttk.Label(fuss, text="",
+                                        foreground=FARBEN["verweis"],
+                                        cursor=ZEIGEHAND)
         self.wurzel.bind("<Return>", lambda _: self.rahmen_senden())
+
+    def _update_pruefen(self):
+        """Läuft im Hintergrund und meldet nur, wenn es etwas Neues gibt."""
+        gefunden = neuere_fassung(VERSION)
+        if gefunden:
+            self.post.put(("update", gefunden))
+
+    def _update_zeigen(self, fassung: str, adresse: str):
+        self.update_hinweis.config(
+            text="↑ Fassung %s ist da – hier laden" % fassung)
+        self.update_hinweis.pack(side="right", padx=(0, 14))
+        self.update_hinweis.bind(
+            "<Button-1>", lambda _e: webbrowser.open(adresse))
 
     # --------------------------------------------------------- Meldungen
     def melden(self, text: str, in_verlauf: bool = False, daten=None):
@@ -2620,6 +2646,9 @@ class LiveScanner:
                 # es nicht mehr auf die Karte. Ohne diese Prüfung überschrieb
                 # der Preis der vorigen Figur Namen, Nummer und Bestand der
                 # neuen, und die drei Knöpfe buchten wieder die alte.
+                if art == "update":
+                    self._update_zeigen(*last)
+                    continue
                 if art == "fuer":
                     fuer, art, last = last
                     if fuer is not self.gewaehlt:
@@ -3830,6 +3859,52 @@ class LiveScanner:
         zustand = self.zustand.get()
         self._tun(lambda t: self.instanz.auf_liste(nummer, t, zustand, preis),
                   "Liste")
+
+
+REPO = "Melle79/brickfolio-livescan"
+
+
+def fassungszahlen(text: str) -> tuple:
+    """»v1.5.2« → (1, 5, 2). Was sich nicht lesen lässt, wird zu 0.
+
+    Nicht als Text vergleichen: »1.10.0« käme sonst vor »1.9.0«.
+    """
+    zahlen = []
+    for teil in (text or "").lstrip("vV").split(".")[:3]:
+        ziffern = "".join(z for z in teil if z.isdigit())
+        zahlen.append(int(ziffern) if ziffern else 0)
+    while len(zahlen) < 3:
+        zahlen.append(0)
+    return tuple(zahlen)
+
+
+def neuere_fassung(jetzt: str = "") -> tuple | None:
+    """Gibt es eine neuere Fassung? (Fassung, Adresse) oder None.
+
+    Fragt die Release-Auskunft von GitHub. **Schweigt bei jedem Problem** –
+    kein Netz, kein Zugang, GitHub ausgelastet: Ein Werkzeug für
+    Auktions-Streams darf nicht mit Fehlern über sich selbst stören.
+
+    Solange das Repo privat ist, antwortet GitHub ohne Anmeldung mit 404 –
+    dann bleibt es still. Ein Zugangstoken kommt dafür nicht in Frage: Es
+    wäre in jedem ausgelieferten Programm mit drin.
+    """
+    jetzt = jetzt or VERSION
+    try:
+        antrag = urllib.request.Request(
+            "https://api.github.com/repos/%s/releases/latest" % REPO,
+            headers={"Accept": "application/vnd.github+json",
+                     "User-Agent": "Brickfolio-Live-Scanner/%s" % jetzt})
+        with urllib.request.urlopen(antrag, timeout=15) as antwort:
+            d = json.loads(antwort.read())
+    except Exception:
+        return None
+    kennung = str(d.get("tag_name") or "")
+    if not kennung or fassungszahlen(kennung) <= fassungszahlen(jetzt):
+        return None
+    return (kennung.lstrip("vV"),
+            str(d.get("html_url")
+                or "https://github.com/%s/releases/latest" % REPO))
 
 
 def handbuch_pfad():

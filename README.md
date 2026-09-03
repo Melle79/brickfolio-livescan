@@ -633,6 +633,27 @@ ein paar Sekunden durch und sagt am Ende, was durchgefallen ist.
 
 MIT, wie Brickfolio selbst.
 
+## Hinweis auf neue Fassungen
+
+Beim Start fragt der Scanner einmal im Hintergrund bei GitHub nach, ob es
+eine neuere Fassung gibt. Nur wenn es eine gibt, erscheint unten rechts
+eine Zeile — ein Klick öffnet die Seite zum Laden. Gibt es nichts Neues,
+ändert sich am Bild nichts.
+
+Bei jedem Problem — kein Netz, GitHub ausgelastet — **schweigt** sie. Ein
+Werkzeug für Auktions-Streams hat nicht mit Fehlern über sich selbst zu
+stören.
+
+Wer gar nicht gefragt werden will, trägt in `~/.brickfolio-livescan.json`
+ein:
+
+    "updates_pruefen": false
+
+> **Solange das Repo privat ist, findet die Prüfung nichts.** GitHub
+> antwortet ohne Anmeldung mit 404, und ein Zugangstoken kommt nicht in
+> ein ausgeliefertes Programm — es wäre in jeder Kopie mit drin. Sobald das
+> Repo öffentlich ist, funktioniert es ohne weitere Änderung.
+
 ## Mit mehreren Bildschirmen
 
 Beide Systeme nehmen den Rahmen über **alle** Bildschirme auf. Läuft der

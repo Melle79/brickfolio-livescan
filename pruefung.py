@@ -1626,6 +1626,75 @@ else:
     finally:
         livescan.IST_WINDOWS = _vorher
 
+# ============================================ Hinweis auf neue Fassungen
+# Ein Werkzeug für Auktions-Streams darf sich nicht in den Vordergrund
+# spielen. Die Zeile erscheint nur, wenn es wirklich etwas Neues gibt –
+# und schweigt bei jedem Problem, statt über sich selbst zu klagen.
+abschnitt("12. Hinweis auf eine neuere Fassung")
+
+pruefe(livescan.fassungszahlen("v1.5.2") == (1, 5, 2),
+       "»v1.5.2« wird zu (1, 5, 2)")
+pruefe(livescan.fassungszahlen("1.5") == (1, 5, 0),
+       "Fehlendes wird zu Null ergänzt")
+pruefe(livescan.fassungszahlen("kaputt") == (0, 0, 0),
+       "und Unlesbares stürzt nicht ab")
+pruefe(livescan.fassungszahlen("1.9.0") < livescan.fassungszahlen("1.10.0"),
+       "1.10.0 ist neuer als 1.9.0 – als Text verglichen wäre es umgekehrt")
+
+_echt_urlopen = livescan.urllib.request.urlopen
+
+
+class _Antwort:
+    def __init__(self, inhalt):
+        self._i = inhalt.encode()
+
+    def read(self):
+        return self._i
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *_a):
+        return False
+
+
+def _antwortet(text):
+    def f(_antrag, timeout=None):
+        return _Antwort(text)
+    return f
+
+
+livescan.urllib.request.urlopen = _antwortet(
+    '{"tag_name": "v9.9.9", "html_url": "https://beispiel.test/neu"}')
+try:
+    _neu = livescan.neuere_fassung("1.5.2")
+    pruefe(_neu == ("9.9.9", "https://beispiel.test/neu"),
+           "eine neuere Fassung wird mit ihrer Adresse gemeldet")
+    pruefe(livescan.neuere_fassung("9.9.9") is None,
+           "die eigene Fassung ist kein Grund für einen Hinweis")
+    pruefe(livescan.neuere_fassung("10.0.0") is None,
+           "und eine ältere draußen erst recht nicht")
+finally:
+    livescan.urllib.request.urlopen = _echt_urlopen
+
+
+def _wirft(_antrag, timeout=None):
+    raise OSError("kein Netz")
+
+
+livescan.urllib.request.urlopen = _wirft
+try:
+    pruefe(livescan.neuere_fassung("1.0.0") is None,
+           "ohne Netz schweigt sie, statt zu stören")
+finally:
+    livescan.urllib.request.urlopen = _echt_urlopen
+
+_roh_upd = pathlib.Path(livescan.__file__).read_text()
+pruefe("daemon=True" in _roh_upd.split("_update_pruefen")[1][:200],
+       "die Abfrage läuft im Hintergrund – der Start wartet nicht darauf")
+pruefe("updates_pruefen" in _roh_upd,
+       "und sie lässt sich in den Einstellungen abschalten")
+
 # ============================================================ Bilanz
 print("\n" + "─" * 58)
 print("\033[1m%d Proben bestanden, %d fehlgeschlagen\033[0m"
