@@ -379,6 +379,36 @@ pruefe("farben_setzen(wurzel)"
        in _roh_farben[:_roh_farben.index("self._bauen()")],
        "und die Palette wird **vor** dem Aufbau der Oberfläche gesetzt")
 
+# --- Feste helle Zeilen brauchen feste dunkle Schrift ------------------
+# Diese beiden Gründe tragen eine Bedeutung und bleiben deshalb hell,
+# egal welches Erscheinungsbild gilt. Die Schrift darauf war aber die
+# voreingestellte – und die ist im Nachtmodus hell: weiß auf blassgrün.
+# Wer den Hintergrund setzt, muss auch die Schrift setzen.
+for _grund, _schrift, _wie in (
+        (livescan.GRUEN_ZEILE, livescan.GRUEN_ZEILE_SCHRIFT, "»habt ihr schon«"),
+        (livescan.WUNSCH_ZEILE, livescan.WUNSCH_ZEILE_SCHRIFT, "»Wunschliste«")):
+    _k = _kontrast(_schrift, _grund)
+    pruefe(_k >= 4.0,
+           "%s: die Schrift steht auf ihrem hellen Grund (Kontrast %.1f)"
+           % (_wie, _k))
+
+# Und die Regel selbst: Wo ein Hintergrund gesetzt wird, steht auch eine
+# Schriftfarbe daneben.
+_roh_zeilen = pathlib.Path(livescan.__file__).read_text()
+for _stelle in ("background=livescan.GRUEN_ZEILE", "background=GRUEN_ZEILE",
+                "background=WUNSCH_ZEILE"):
+    if _stelle in _roh_zeilen:
+        _ab = _roh_zeilen[_roh_zeilen.index(_stelle):][:220]
+        # **Nicht einfach nach »foreground=« suchen** – das steckt auch in
+        # »selectforeground=«, das nur für die *markierte* Zeile gilt. Die
+        # erste Fassung dieser Probe fand genau das und schlug deshalb
+        # nicht an, als die eigentliche Schriftfarbe fehlte.
+        _echte = len([z for z in _ab.split("foreground=")[:-1]
+                      if not z.endswith("select")])
+        pruefe(_echte >= 1,
+               "wo %s gesetzt wird, steht auch eine Schriftfarbe"
+               % _stelle.split("=")[1])
+
 # --- Umschalten im laufenden Betrieb -----------------------------------
 # macOS wechselt abends von selbst auf dunkel. Der Fenstergrund folgt
 # sofort – die Schriftfarben nicht, die stehen fest in den Bedienelementen.

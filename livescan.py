@@ -70,7 +70,7 @@ from tkinter import ttk
 
 # Steht auch im Info.plist des Bündels. setup.py liest sie von hier,
 # damit sie nicht an zwei Stellen auseinanderläuft; pruefung.py wacht darüber.
-VERSION = "1.6.0"
+VERSION = "1.6.1"
 
 # Auf welchem System laufen wir? Der Mac-Weg bleibt unangetastet; fuer
 # Windows stehen daneben eigene Zweige. Alles andere (Linux) faellt auf den
@@ -616,6 +616,15 @@ RAHMEN_AN = "#1a7f37"
 # aus dem man überhaupt zuschaut.
 WUNSCH_AN = "#e08a00"
 WUNSCH_ZEILE = "#ffeec2"        # blasser Grund in der Trefferliste
+WUNSCH_ZEILE_SCHRIFT = "#7a5c00"
+
+# **Wer den Hintergrund setzt, muss auch die Schrift setzen.** Diese beiden
+# Gründe sind fest hell – sie tragen eine Bedeutung und dürfen sich nicht
+# mit dem Erscheinungsbild ändern. Die Schrift darauf blieb aber die
+# voreingestellte, und die ist im Nachtmodus hell: weiß auf blassgrün,
+# unlesbar. Am 01.09.2026 genau so aufgetreten.
+GRUEN_ZEILE = "#d7f0dd"         # „habt ihr schon"
+GRUEN_ZEILE_SCHRIFT = "#14532d"
 WUNSCH_TAKTE = 8                # so oft wird umgeschaltet
 WUNSCH_TAKT = 260               # Millisekunden je Wechsel
 # Der Mac hat den Ton im System liegen. Windows hat kein Gegenstueck an
@@ -3502,11 +3511,13 @@ class LiveScanner:
             # „Schon da" färbt vor „Wunsch": Vor einem Doppelkauf zu warnen
             # wiegt schwerer, und die Marken zeigen ohnehin beides.
             if eingeplant:
-                self.liste.itemconfig(i, background="#d7f0dd",
+                self.liste.itemconfig(i, background=GRUEN_ZEILE,
+                                      foreground=GRUEN_ZEILE_SCHRIFT,
                                       selectbackground=RAHMEN_AN,
                                       selectforeground="#ffffff")
             elif wunsch:
                 self.liste.itemconfig(i, background=WUNSCH_ZEILE,
+                                      foreground=WUNSCH_ZEILE_SCHRIFT,
                                       selectbackground=WUNSCH_AN,
                                       selectforeground="#ffffff")
 
