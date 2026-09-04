@@ -633,26 +633,54 @@ ein paar Sekunden durch und sagt am Ende, was durchgefallen ist.
 
 MIT, wie Brickfolio selbst.
 
-## Hinweis auf neue Fassungen
+## Neue Fassungen — der Scanner erneuert sich selbst
 
 Beim Start fragt der Scanner einmal im Hintergrund bei GitHub nach, ob es
 eine neuere Fassung gibt. Nur wenn es eine gibt, erscheint unten rechts
-eine Zeile — ein Klick öffnet die Seite zum Laden. Gibt es nichts Neues,
-ändert sich am Bild nichts.
+eine Zeile. Gibt es nichts Neues, ändert sich am Bild nichts.
 
-Bei jedem Problem — kein Netz, GitHub ausgelastet — **schweigt** sie. Ein
-Werkzeug für Auktions-Streams hat nicht mit Fehlern über sich selbst zu
-stören.
+Ein Klick darauf öffnet ein kleines Fenster mit **Jetzt aktualisieren**.
+Der Scanner holt das Paket dann selbst, packt es aus, prüft es und tauscht
+sich aus; danach startet er neu. Ein Klick, sonst nichts.
+
+**Warum nicht einfach die Seite aufmachen?** Weil das auf dem Mac in einer
+Sackgasse endet. Der Browser hängt jedem Download das Quarantäne-Merkmal
+an, und an dem verweigert macOS den Start:
+
+> „Apple konnte nicht überprüfen, ob »Brickfolio Live-Scanner« frei von
+> Schadsoftware ist" — mit den Knöpfen *In den Papierkorb legen* und
+> *Fertig*, aber ohne einen zum Freigeben.
+
+Holt das Programm die Datei dagegen selbst, entsteht das Merkmal gar nicht
+erst — nachgemessen hängt am selbst geladenen Paket nur
+`com.apple.provenance`. Der Weg über die Seite steht im Fenster trotzdem
+daneben, für den Fall, dass hier etwas klemmt.
+
+**Eingespielt wird nur, was von uns kommt.** Vor dem Tausch vergleicht der
+Scanner das Kennmal des Pakets — die *designated requirement*, in der
+unser Zertifikat steht — mit seinem eigenen. Weicht es ab oder fehlt die
+Signatur, bleibt alles, wie es war. Unter Windows ist nichts signiert; dort
+bleibt es bei HTTPS zu GitHub, also derselben Sicherheit wie beim Laden von
+Hand.
+
+**Den letzten Schritt macht ein Helfer.** Ein laufendes Programm kann sich
+nicht selbst ersetzen: Unter Windows ist die eigene Datei gesperrt, auf dem
+Mac zöge man dem eigenen Prozess den Boden weg. Also schreibt der Scanner
+ein kurzes Skript, das wartet, bis er beendet ist, tauscht und ihn neu
+startet. Misslingt der Tausch, kommt die alte Fassung zurück — lieber die
+alte als gar keine.
+
+Aus dem Quelltext gestartet fehlt der Knopf, und im Fenster steht, warum:
+Da gibt es nichts zu ersetzen, das macht `git`.
+
+Bei jedem Problem — kein Netz, GitHub ausgelastet — **schweigt** die
+Abfrage. Ein Werkzeug für Auktions-Streams hat nicht mit Fehlern über sich
+selbst zu stören.
 
 Wer gar nicht gefragt werden will, trägt in `~/.brickfolio-livescan.json`
 ein:
 
     "updates_pruefen": false
-
-> **Solange das Repo privat ist, findet die Prüfung nichts.** GitHub
-> antwortet ohne Anmeldung mit 404, und ein Zugangstoken kommt nicht in
-> ein ausgeliefertes Programm — es wäre in jeder Kopie mit drin. Sobald das
-> Repo öffentlich ist, funktioniert es ohne weitere Änderung.
 
 ## Mit mehreren Bildschirmen
 
@@ -786,6 +814,10 @@ Unter [Releases](https://github.com/Melle79/brickfolio-livescan/releases)
 liegt bei jeder Fassung ein ZIP. Die App bringt Python und Tk selbst mit,
 es muss nichts weiter installiert sein.
 
+> **Nur beim ersten Mal.** Ab Fassung 1.7.0 erneuert sich der Scanner
+> selbst — siehe [Neue Fassungen](#neue-fassungen--der-scanner-erneuert-sich-selbst).
+> Der Weg hier ist der für den Anfang und für den Fall, dass etwas klemmt.
+
 ### Der bequeme Weg: am Terminal laden
 
     gh release download --repo Melle79/brickfolio-livescan \
@@ -810,9 +842,10 @@ verweigert die App zwar in beiden Fällen (sie ist nicht notarisiert),
 aber dieses Urteil wird nur bei Dateien *mit* Quarantäne-Merkmal
 vollstreckt.
 
-Das gilt auch für jede spätere Fassung. Über den Browser käme der Dialog
-jedes Mal wieder – die Signatur ändert sich mit jedem Bau, macOS erkennt
-die einmal erteilte Erlaubnis also nicht wieder.
+Das gilt auch für jede spätere Fassung, die über den Browser käme – der
+Dialog erschiene jedes Mal wieder. Genau deshalb lädt der Scanner seine
+Aktualisierungen inzwischen **selbst**: Was das Programm holt, trägt kein
+Quarantäne-Merkmal, und die Sperre kommt gar nicht erst.
 
 ### Über den Browser
 

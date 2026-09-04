@@ -45,6 +45,7 @@ import sys
 import tempfile
 import threading
 import time
+import zipfile
 # --------------------------------------------------------------- Tcl/Tk
 # **Vor** dem tkinter-Import, darum steht der Block mitten zwischen den
 # Importen. py2app kopiert zwar libtcl und libtk ins Buendel, aber nicht
@@ -70,7 +71,7 @@ from tkinter import ttk
 
 # Steht auch im Info.plist des Bündels. setup.py liest sie von hier,
 # damit sie nicht an zwei Stellen auseinanderläuft; pruefung.py wacht darüber.
-VERSION = "1.6.1"
+VERSION = "1.7.0"
 
 # Auf welchem System laufen wir? Der Mac-Weg bleibt unangetastet; fuer
 # Windows stehen daneben eigene Zweige. Alles andere (Linux) faellt auf den
@@ -1239,6 +1240,8 @@ FARBEN = {
     "kraeftig": "#444",    # etwas weniger kräftig
     "linie":    "#ddd",    # Trennlinien und leere Flächen
     "verweis":  "#0b5fa5", # anklickbar
+    "warnung":  "#b00000", # etwas ist schiefgegangen
+    "geschafft": "#22aa77", # etwas hat geklappt
 }
 
 _FARBEN_DUNKEL = {
@@ -1249,6 +1252,10 @@ _FARBEN_DUNKEL = {
     "kraeftig": "#d0d0d0",
     "linie":  "#3a3a3a",
     "verweis": "#6cb6f0",
+    # Nachts nicht dasselbe Rot: #b00000 auf dunklem Grund ist kaum noch zu
+    # lesen (Kontrast 2,4). Aufgehellt steht es da, ohne zu schreien.
+    "warnung": "#ff8a80",
+    "geschafft": "#5bd6a4",
 }
 
 
@@ -2239,12 +2246,118 @@ class LiveScanner:
         if gefunden:
             self.post.put(("update", gefunden))
 
-    def _update_zeigen(self, fassung: str, adresse: str):
+    def _update_zeigen(self, fassung: str, seite: str, paket: str = ""):
         self.update_hinweis.config(
             text="↑ Fassung %s ist da – hier laden" % fassung)
         self.update_hinweis.pack(side="right", padx=(0, 14))
         self.update_hinweis.bind(
-            "<Button-1>", lambda _e: webbrowser.open(adresse))
+            "<Button-1>",
+            lambda _e: self.update_fenster(fassung, seite, paket))
+
+    def update_fenster(self, fassung: str, seite: str, paket: str):
+        """Der Scanner erneuert sich selbst – ein Knopf, sonst nichts.
+
+        **Warum nicht einfach die Seite aufmachen?** Weil der Browser jedem
+        Download das Quarantäne-Merkmal anhängt und macOS die neue Fassung
+        dann nicht startet: »Apple konnte nicht überprüfen …«, ohne Knopf
+        zum Freigeben. Holt das Programm die Datei selbst, entsteht das
+        Merkmal gar nicht erst. Der Weg über die Seite bleibt trotzdem
+        stehen – für den Fall, dass hier etwas klemmt.
+        """
+        ziel = eigener_ort()
+        f = tk.Toplevel(self.wurzel)
+        f.title("Aktualisierung")
+        f.attributes("-topmost", True)
+        r = ttk.Frame(f, padding=14)
+        r.pack(fill="both", expand=True)
+        ttk.Label(r, text="Fassung %s ist da." % fassung,
+                  font=("Helvetica", 14, "bold")).pack(anchor="w")
+        ttk.Label(r, text="Ihr habt %s." % VERSION,
+                  foreground=FARBEN["leise"]).pack(anchor="w", pady=(0, 10))
+
+        stand = ttk.Label(r, text="", wraplength=330,
+                          foreground=FARBEN["kraeftig"])
+        knoepfe = ttk.Frame(r)
+        knoepfe.pack(fill="x")
+
+        # Was im Faden passiert, kommt hierüber zurück. Tk vom fremden Faden
+        # aus anzufassen geht schief – der Rest des Programms macht es aus
+        # demselben Grund über `self.post`.
+        briefkasten = queue.Queue()
+
+        def sagen(text):
+            briefkasten.put(("stand", text))
+
+        def arbeiten():
+            ordner = tempfile.mkdtemp(prefix="livescan-update-")
+            try:
+                archiv = os.path.join(ordner, paket_name())
+                sagen("Lade …")
+
+                def fortschritt(geholt, ganz):
+                    if ganz:
+                        sagen("Lade … %d %%" % (100 * geholt // ganz))
+
+                paket_laden(paket, archiv, fortschritt)
+                sagen("Packe aus …")
+                neu = paket_auspacken(archiv, os.path.join(ordner, "aus"))
+                sagen("Prüfe …")
+                klage = paket_pruefen(neu, ziel)
+                if klage:
+                    briefkasten.put(("aus", klage))
+                    return
+                tausch_starten(ziel, neu, ordner)
+                briefkasten.put(("fertig", None))
+            except Exception as e:
+                briefkasten.put(("aus", _meldung(e)))
+
+        def loslegen():
+            for kind in knoepfe.winfo_children():
+                kind.config(state="disabled")
+            stand.pack(anchor="w", pady=(10, 0))
+            threading.Thread(target=arbeiten, daemon=True).start()
+            nachsehen()
+
+        def nachsehen():
+            try:
+                while True:
+                    art, wert = briefkasten.get_nowait()
+                    if art == "stand":
+                        stand.config(text=wert, foreground=FARBEN["kraeftig"])
+                    elif art == "aus":
+                        stand.config(text=wert + " Über die Seite geht es "
+                                     "von Hand.", foreground=FARBEN["warnung"])
+                        for kind in knoepfe.winfo_children():
+                            kind.config(state="normal")
+                        return
+                    else:
+                        stand.config(text="Fertig – der Scanner startet neu.")
+                        # Erst zeigen, dann gehen: Der Helfer wartet ohnehin
+                        # auf unser Ende, eine halbe Sekunde stört ihn nicht.
+                        self.wurzel.after(600, self.wurzel.destroy)
+                        return
+            except queue.Empty:
+                pass
+            f.after(120, nachsehen)
+
+        if ziel and paket and os.access(os.path.dirname(ziel), os.W_OK):
+            ttk.Button(knoepfe, text="Jetzt aktualisieren",
+                       command=loslegen).pack(side="left")
+        else:
+            if not ziel:
+                warum = ("Aus dem Quelltext gestartet – hier hilft git, "
+                         "nicht der Knopf.")
+            elif not paket:
+                warum = "Am Release hängt kein Paket für dieses System."
+            else:
+                warum = "Hier darf ich nichts ersetzen – fehlende Rechte."
+            ttk.Label(r, text=warum, foreground=FARBEN["leise"],
+                      wraplength=330).pack(anchor="w", pady=(0, 8))
+        ttk.Button(knoepfe, text="Seite öffnen",
+                   command=lambda: webbrowser.open(seite)).pack(
+                       side="left", padx=(8, 0))
+        ttk.Button(knoepfe, text="Später", command=f.destroy).pack(
+            side="right")
 
     # --------------------------------------------------------- Meldungen
     def melden(self, text: str, in_verlauf: bool = False, daten=None):
@@ -2815,7 +2928,8 @@ class LiveScanner:
         k_cf = ttk.Button(r, text="🌐 Über Cloudflare anmelden …")
         k_cf.pack(anchor="w", pady=(0, 8))
 
-        hinweis = ttk.Label(r, text="", foreground="#b00", wraplength=330)
+        hinweis = ttk.Label(r, text="", foreground=FARBEN["warnung"],
+                            wraplength=330)
         hinweis.pack(fill="x")
 
         def cf_anmelden():
@@ -2828,7 +2942,8 @@ class LiveScanner:
                 k_cf.config(state="normal",
                             text="🌐 Über Cloudflare anmelden …")
                 hinweis.config(text=meldung,
-                               foreground="#2a7" if geschafft else "#b00")
+                               foreground=FARBEN["geschafft" if geschafft
+                                                 else "warnung"])
 
             def arbeit():
                 geschafft, meldung = Instanz(adresse).cf_anmelden()
@@ -2974,7 +3089,8 @@ class LiveScanner:
         # Listen auch („Flohmarkt 04.08."), und die Hälfte ist damit getippt.
         eingabe.insert(0, time.strftime(" %d.%m."))
         eingabe.icursor(0)
-        hinweis = ttk.Label(r, text="", foreground="#b00", wraplength=300)
+        hinweis = ttk.Label(r, text="", foreground=FARBEN["warnung"],
+                            wraplength=300)
         hinweis.pack(fill="x")
 
         def anlegen():
@@ -3890,15 +4006,16 @@ def fassungszahlen(text: str) -> tuple:
 
 
 def neuere_fassung(jetzt: str = "") -> tuple | None:
-    """Gibt es eine neuere Fassung? (Fassung, Adresse) oder None.
+    """Gibt es eine neuere Fassung? (Fassung, Seite, Paket) oder None.
 
     Fragt die Release-Auskunft von GitHub. **Schweigt bei jedem Problem** –
     kein Netz, kein Zugang, GitHub ausgelastet: Ein Werkzeug für
     Auktions-Streams darf nicht mit Fehlern über sich selbst stören.
 
-    Solange das Repo privat ist, antwortet GitHub ohne Anmeldung mit 404 –
-    dann bleibt es still. Ein Zugangstoken kommt dafür nicht in Frage: Es
-    wäre in jedem ausgelieferten Programm mit drin.
+    »Paket« ist die Adresse, von der der Scanner sich selbst erneuern kann;
+    fehlt sie, bleibt der Weg über die Seite. Ein Zugangstoken kommt für
+    die Abfrage nicht in Frage: Es wäre in jedem ausgelieferten Programm
+    mit drin.
     """
     jetzt = jetzt or VERSION
     try:
@@ -3915,8 +4032,217 @@ def neuere_fassung(jetzt: str = "") -> tuple | None:
         return None
     return (kennung.lstrip("vV"),
             str(d.get("html_url")
-                or "https://github.com/%s/releases/latest" % REPO))
+                or "https://github.com/%s/releases/latest" % REPO),
+            paket_waehlen(d.get("assets")))
 
+def paket_name() -> str:
+    """Wie das Paket für dieses System im Release heißt."""
+    return ("Brickfolio-Live-Scanner-Windows-x64.zip" if IST_WINDOWS
+            else "Brickfolio-Live-Scanner-macOS-arm64.zip")
+
+
+def paket_waehlen(anhaenge) -> str:
+    """Die Adresse des Pakets für dieses System – oder "".
+
+    Steht getrennt von der Abfrage, damit sich das Aussuchen ohne Netz
+    prüfen lässt. Hängt am Release keins – etwa weil der Bau noch läuft –,
+    bleibt es leer: Dann bietet der Scanner nur die Seite an, statt eine
+    Aktualisierung zu versprechen, die er nicht halten kann.
+    """
+    gesucht = paket_name()
+    for anhang in anhaenge or []:
+        if not isinstance(anhang, dict):
+            continue
+        if str(anhang.get("name") or "") == gesucht:
+            return str(anhang.get("browser_download_url") or "")
+    return ""
+
+
+def eigener_ort(ausfuehrbar: str = "", art: object = "?") -> str:
+    """Was ersetzt werden müsste – oder "" beim Lauf aus dem Quelltext.
+
+    macOS: …/Brickfolio Live-Scanner.app/Contents/MacOS/<Programm>
+    – drei Ebenen höher liegt das Bündel.
+    Windows: …\\Brickfolio Live-Scanner\\<Programm>.exe
+    – der Ordner drumherum ist es.
+
+    Beides kommt als Parameter herein statt aus `sys`, damit sich der Weg
+    für **beide** Systeme auf jedem einzelnen prüfen lässt.
+    """
+    ausfuehrbar = ausfuehrbar or sys.executable
+    if art == "?":
+        art = getattr(sys, "frozen", None)
+    if not art:
+        # Aus dem Quelltext gestartet: Da ist nichts zu tauschen, und wer so
+        # startet, holt sich die neue Fassung mit git.
+        return ""
+    ordner = os.path.dirname(os.path.abspath(ausfuehrbar))
+    if art == "macosx_app":
+        buendel = os.path.dirname(os.path.dirname(ordner))
+        return buendel if buendel.endswith(".app") else ""
+    return ordner
+
+
+def kennmal(pfad: str) -> str:
+    """Die »designated requirement« einer App – oder "".
+
+    Das ist der Fingerabdruck, an dem macOS eine App wiedererkennt; bei uns
+    steht das Zertifikat darin, mit dem gebaut wurde. Sie ist der Grund,
+    warum die Bildschirmaufnahme-Freigabe ein Update überlebt – und sie ist
+    der Maßstab dafür, ob ein geladenes Paket wirklich von uns kommt.
+    """
+    try:
+        fertig = subprocess.run(["codesign", "-d", "-r-", pfad],
+                                capture_output=True, text=True, timeout=60)
+    except Exception:
+        return ""
+    for zeile in (fertig.stdout + fertig.stderr).splitlines():
+        # Ein »#« davor heißt nur: nicht eingetragen, sondern abgeleitet.
+        # Die Kennung dahinter ist dieselbe, und genau die wollen wir.
+        zeile = zeile.strip().lstrip("#").strip()
+        if zeile.startswith("designated =>"):
+            return zeile.split("=>", 1)[1].strip()
+    return ""
+
+
+def paket_pruefen(neu: str, alt: str) -> str:
+    """Darf das eingespielt werden? Leerer Text heißt ja, sonst der Grund.
+
+    **Auf dem Mac wird nicht geglaubt, sondern nachgesehen.** Das Paket kam
+    zwar über HTTPS von GitHub, eingespielt wird es aber nur, wenn es
+    dasselbe Kennmal trägt wie die laufende Fassung – also mit unserem
+    Zertifikat signiert ist. Trägt die laufende keins (Eigenbau ohne
+    Signatur), reicht eine gültige Signatur am neuen Paket.
+
+    Unter Windows gibt es nichts zu prüfen, dort ist nichts signiert; die
+    Sicherheit ist dieselbe wie beim Laden von Hand – HTTPS zu GitHub.
+    """
+    if IST_WINDOWS:
+        exe = os.path.join(neu, "Brickfolio Live-Scanner.exe")
+        return "" if os.path.exists(exe) else "Im Paket steckt kein Programm."
+    try:
+        fertig = subprocess.run(
+            ["codesign", "--verify", "--deep", "--strict", neu],
+            capture_output=True, text=True, timeout=300)
+    except Exception as e:
+        return "Signatur nicht prüfbar (%s)." % e
+    if fertig.returncode != 0:
+        return "Die Signatur des Pakets stimmt nicht."
+    neues = kennmal(neu)
+    if not neues:
+        return "Das Paket ist nicht signiert."
+    altes = kennmal(alt)
+    if altes and altes != neues:
+        return "Das Paket ist von jemand anderem signiert."
+    return ""
+
+
+def paket_laden(adresse: str, ziel: str, melden=None) -> None:
+    """Holt das Paket – **ohne Browser**, und genau darum geht es.
+
+    Das Quarantäne-Merkmal, an dem Gatekeeper den Start verweigert, hängt
+    der Browser an, nicht das Netz. Was das Programm selbst holt, trägt es
+    nicht: Die neue Fassung startet danach ohne Nachfrage und ohne den
+    Umweg über die Systemeinstellungen.
+    """
+    antrag = urllib.request.Request(
+        adresse,
+        headers={"User-Agent": "Brickfolio-Live-Scanner/%s" % VERSION,
+                 "Accept": "application/octet-stream"})
+    with urllib.request.urlopen(antrag, timeout=120) as antwort:
+        ganz = int(antwort.headers.get("Content-Length") or 0)
+        geholt = 0
+        with open(ziel, "wb") as datei:
+            while True:
+                brocken = antwort.read(65536)
+                if not brocken:
+                    break
+                datei.write(brocken)
+                geholt += len(brocken)
+                if melden:
+                    melden(geholt, ganz)
+
+
+def paket_auspacken(paket: str, ordner: str) -> str:
+    """Packt aus und gibt zurück, was drin lag.
+
+    Auf dem Mac mit `ditto`: In einem Bündel stecken Verweise und Rechte,
+    die `zipfile` verliert – mit Bordmitteln ausgepackt startet die App
+    nicht. Unter Windows liegt der **Inhalt** des Programmordners im Paket,
+    ohne den Ordner selbst; da ist das Ziel der Ordner.
+    """
+    if IST_WINDOWS:
+        with zipfile.ZipFile(paket) as archiv:
+            archiv.extractall(ordner)
+        return ordner
+    subprocess.run(["ditto", "-x", "-k", paket, ordner],
+                   check=True, capture_output=True, timeout=600)
+    for name in sorted(os.listdir(ordner)):
+        if name.endswith(".app"):
+            return os.path.join(ordner, name)
+    raise Fehler("Im Paket steckt keine App.")
+
+
+_TAUSCH_MAC = """#!/bin/sh
+# Wartet, bis der Scanner beendet ist, tauscht und startet ihn neu.
+ziel="$1"; neu="$2"; pid="$3"
+i=0
+while kill -0 "$pid" 2>/dev/null && [ "$i" -lt 300 ]; do
+    sleep 0.2
+    i=$((i + 1))
+done
+alt="$ziel.vorher"
+rm -rf "$alt"
+mv "$ziel" "$alt" || exit 1
+if ditto "$neu" "$ziel"; then
+    rm -rf "$alt"
+else
+    # Misslungen: lieber die alte Fassung zurueck als gar keine.
+    rm -rf "$ziel"
+    mv "$alt" "$ziel"
+fi
+# Nur was ein Programm ist, wird auch wieder gestartet.
+case "$ziel" in *.app) open "$ziel";; esac
+"""
+
+_TAUSCH_WINDOWS = """@echo off
+rem Wartet, bis der Scanner beendet ist, tauscht und startet ihn neu.
+:warten
+tasklist /fi "PID eq %~3" 2>nul | findstr /i "%~3" >nul
+if not errorlevel 1 (
+    ping -n 2 127.0.0.1 >nul
+    goto warten
+)
+robocopy "%~2" "%~1" /MIR /NFL /NDL /NJH /NJS /R:2 /W:1 >nul
+if exist "%~1\\Brickfolio Live-Scanner.exe" start "" "%~1\\Brickfolio Live-Scanner.exe"
+"""
+
+
+def tausch_starten(ziel: str, neu: str, ordner: str,
+                   warten_auf: int = 0) -> None:
+    """Startet den Helfer, der tauscht, sobald dieses Programm weg ist.
+
+    Ein laufendes Programm kann sich nicht selbst ersetzen: Unter Windows
+    ist die eigene Datei gesperrt, auf dem Mac zöge man dem eigenen Prozess
+    den Boden weg. Also übernimmt ein kleines Skript den letzten Schritt –
+    es wartet auf unser Ende, tauscht, und startet neu.
+
+    Es läuft **losgelöst** weiter (`start_new_session`), sonst nähme es
+    unser Ende mit und käme nie bis zum Tauschen.
+
+    `warten_auf` gibt es nur, damit sich der Tausch prüfen lässt: Mit der
+    eigenen Kennzahl müsste die Probe sich selbst beenden, um ihn zu sehen.
+    """
+    name = "tausch.cmd" if IST_WINDOWS else "tausch.sh"
+    helfer = os.path.join(ordner, name)
+    with open(helfer, "w", encoding="utf-8", newline="") as datei:
+        datei.write(_TAUSCH_WINDOWS if IST_WINDOWS else _TAUSCH_MAC)
+    os.chmod(helfer, 0o755)
+    befehl = ([helfer] if IST_WINDOWS else ["/bin/sh", helfer]) \
+        + [ziel, neu, str(warten_auf or os.getpid())]
+    subprocess.Popen(befehl, close_fds=True,
+                     start_new_session=not IST_WINDOWS,
+                     stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
 def handbuch_pfad():
     """Wo das Handbuch liegt - im Buendel oder neben dem Quelltext."""

@@ -24,6 +24,8 @@ import os
 import pathlib
 import queue
 import io
+import shutil
+import subprocess
 import sys
 import urllib.error
 import tempfile
@@ -340,7 +342,8 @@ def _kontrast(vorne, hinten):
 # liegen dort bewusst niedrig (#888 auf Weiß ergibt 3,5). Verlangt wird
 # deshalb: Jede Rolle muss nachts **mindestens so gut** stehen wie am Tag.
 # Dazu eine Untergrenze, damit nichts ganz verschwindet.
-_ROLLEN = ("leise", "matt", "still", "klar", "kraeftig", "verweis")
+_ROLLEN = ("leise", "matt", "still", "klar", "kraeftig", "verweis",
+           "warnung", "geschafft")
 
 livescan.farben_setzen(None, dunkel=False)
 _hell_werte = {_r: _kontrast(livescan.FARBEN[_r], "#ffffff") for _r in _ROLLEN}
@@ -1695,15 +1698,28 @@ def _antwortet(text):
 
 
 livescan.urllib.request.urlopen = _antwortet(
-    '{"tag_name": "v9.9.9", "html_url": "https://beispiel.test/neu"}')
+    '{"tag_name": "v9.9.9", "html_url": "https://beispiel.test/neu",'
+    ' "assets": [{"name": "irgendwas.txt", "browser_download_url": "x"},'
+    ' {"name": "%s", "browser_download_url": "https://beispiel.test/p.zip"}]}'
+    % livescan.paket_name())
 try:
     _neu = livescan.neuere_fassung("1.5.2")
-    pruefe(_neu == ("9.9.9", "https://beispiel.test/neu"),
-           "eine neuere Fassung wird mit ihrer Adresse gemeldet")
+    pruefe(_neu == ("9.9.9", "https://beispiel.test/neu",
+                    "https://beispiel.test/p.zip"),
+           "eine neuere Fassung kommt mit Seite und Paket")
     pruefe(livescan.neuere_fassung("9.9.9") is None,
            "die eigene Fassung ist kein Grund für einen Hinweis")
     pruefe(livescan.neuere_fassung("10.0.0") is None,
            "und eine ältere draußen erst recht nicht")
+finally:
+    livescan.urllib.request.urlopen = _echt_urlopen
+
+livescan.urllib.request.urlopen = _antwortet(
+    '{"tag_name": "v9.9.9", "html_url": "https://beispiel.test/neu"}')
+try:
+    pruefe(livescan.neuere_fassung("1.5.2") == (
+        "9.9.9", "https://beispiel.test/neu", ""),
+        "hängt kein Paket dran, bleibt die Stelle leer statt zu scheitern")
 finally:
     livescan.urllib.request.urlopen = _echt_urlopen
 
@@ -1725,6 +1741,205 @@ pruefe("daemon=True" in _roh_upd.split("_update_pruefen")[1][:200],
 pruefe("updates_pruefen" in _roh_upd,
        "und sie lässt sich in den Einstellungen abschalten")
 
+# ------------------------------------------------- Das Paket aussuchen
+_mein = livescan.paket_name()
+pruefe(livescan.paket_waehlen(
+    [{"name": _mein, "browser_download_url": "https://a.test/gut.zip"}])
+    == "https://a.test/gut.zip",
+    "aus den Anhängen wird das Paket für dieses System gegriffen")
+pruefe(livescan.paket_waehlen(
+    [{"name": "Brickfolio-Live-Scanner-"
+      + ("macOS-arm64" if livescan.IST_WINDOWS else "Windows-x64")
+      + ".zip", "browser_download_url": "https://a.test/falsch.zip"}]) == "",
+    "das Paket des anderen Systems wird nicht genommen")
+pruefe(livescan.paket_waehlen([]) == "" and livescan.paket_waehlen(None) == "",
+       "ohne Anhänge bleibt es leer")
+pruefe(livescan.paket_waehlen(["kein Wörterbuch", 7]) == "",
+       "und Unerwartetes in der Liste stürzt nicht ab")
+
+# ------------------------------------------------- Wo wir selbst liegen
+pruefe(livescan.eigener_ort("/Programme/Scanner.app/Contents/MacOS/Scanner",
+                            "macosx_app") == "/Programme/Scanner.app",
+       "im Bündel führen drei Ebenen hinauf zur App")
+pruefe(livescan.eigener_ort("/wo/anders/Scanner", "macosx_app") == "",
+       "was nicht in einem Bündel liegt, wird nicht angerührt")
+pruefe(livescan.eigener_ort(r"C:\Prog\Scanner\Scanner.exe", True)
+       == os.path.dirname(os.path.abspath(r"C:\Prog\Scanner\Scanner.exe")),
+       "unter Windows ist es der Ordner um die Programmdatei")
+pruefe(livescan.eigener_ort("/egal/livescan.py", None) == "",
+       "aus dem Quelltext gestartet gibt es nichts zu ersetzen")
+
+# ------------------------------------------------- Auspacken und prüfen
+_upd = os.path.join(ORDNER, "upd")
+os.makedirs(_upd, exist_ok=True)
+if livescan.IST_WINDOWS:
+    _drin = os.path.join(_upd, "drin")
+    os.makedirs(_drin, exist_ok=True)
+    pathlib.Path(_drin, "Brickfolio Live-Scanner.exe").write_bytes(b"MZ")
+    _zip = os.path.join(_upd, "p.zip")
+    import zipfile as _zf
+    with _zf.ZipFile(_zip, "w") as _a:
+        _a.write(os.path.join(_drin, "Brickfolio Live-Scanner.exe"),
+                 "Brickfolio Live-Scanner.exe")
+    _aus = livescan.paket_auspacken(_zip, os.path.join(_upd, "aus"))
+    pruefe(os.path.exists(os.path.join(_aus, "Brickfolio Live-Scanner.exe")),
+           "das Windows-Paket wird in den Programmordner ausgepackt")
+    pruefe(livescan.paket_pruefen(_aus, _aus) == "",
+           "ein Paket mit Programmdatei darf eingespielt werden")
+    _leer = os.path.join(_upd, "leer")
+    os.makedirs(_leer, exist_ok=True)
+    pruefe(livescan.paket_pruefen(_leer, _leer) != "",
+           "ein Paket ohne Programmdatei wird abgelehnt")
+else:
+    _app = os.path.join(_upd, "Probe.app")
+    os.makedirs(os.path.join(_app, "Contents", "MacOS"), exist_ok=True)
+    pathlib.Path(_app, "Contents", "Info.plist").write_text(
+        '<?xml version="1.0" encoding="UTF-8"?>\n'
+        '<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" '
+        '"http://www.apple.com/DTDs/PropertyList-1.0.dtd">\n'
+        '<plist version="1.0"><dict>'
+        '<key>CFBundleExecutable</key><string>probe</string>'
+        '<key>CFBundleIdentifier</key><string>test.probe</string>'
+        '</dict></plist>\n')
+    _bin = pathlib.Path(_app, "Contents", "MacOS", "probe")
+    _bin.write_text("#!/bin/sh\nexit 0\n")
+    _bin.chmod(0o755)
+    _zip = os.path.join(_upd, "p.zip")
+    subprocess.run(["ditto", "-c", "-k", "--keepParent", "--sequesterRsrc",
+                    _app, _zip], check=True, capture_output=True)
+    _aus = livescan.paket_auspacken(_zip, os.path.join(_upd, "aus"))
+    pruefe(_aus.endswith("Probe.app") and os.path.isdir(_aus),
+           "aus dem Mac-Paket kommt das Bündel heraus")
+    pruefe(os.access(os.path.join(_aus, "Contents", "MacOS", "probe"), os.X_OK),
+           "und die Rechte im Bündel überleben das Auspacken")
+
+    _ohne = os.path.join(_upd, "ohne")
+    os.makedirs(_ohne, exist_ok=True)
+    pathlib.Path(_ohne, "nur.txt").write_text("nichts")
+    _zip2 = os.path.join(_upd, "ohne.zip")
+    subprocess.run(["ditto", "-c", "-k", "--keepParent", _ohne, _zip2],
+                   check=True, capture_output=True)
+    try:
+        livescan.paket_auspacken(_zip2, os.path.join(_upd, "aus2"))
+        _gemerkt = False
+    except livescan.Fehler:
+        _gemerkt = True
+    pruefe(_gemerkt, "ein Paket ohne App wird nicht stillschweigend genommen")
+
+    # **Der Kern**: Ohne gültige Signatur wird nichts eingespielt.
+    pruefe(livescan.paket_pruefen(_aus, _aus) != "",
+           "unsigniert kommt es nicht durch – so bleibt es auch, wenn "
+           "jemand das Paket unterwegs austauscht")
+    subprocess.run(["codesign", "--force", "-s", "-", _aus],
+                   check=True, capture_output=True)
+    pruefe(livescan.kennmal(_aus) != "",
+           "an einem signierten Bündel steht ein Kennmal")
+    pruefe(livescan.paket_pruefen(_aus, _aus) == "",
+           "dasselbe Kennmal wie die laufende Fassung darf eingespielt werden")
+    _fremd = os.path.join(_upd, "Fremd.app")
+    subprocess.run(["ditto", _aus, _fremd], check=True, capture_output=True)
+    pathlib.Path(_fremd, "Contents", "MacOS", "probe").write_text(
+        "#!/bin/sh\nexit 1\n")
+    subprocess.run(["codesign", "--force", "-s", "-", _fremd],
+                   check=True, capture_output=True)
+    pruefe(livescan.kennmal(_fremd) != livescan.kennmal(_aus),
+           "ein anders signiertes Bündel trägt ein anderes Kennmal")
+    pruefe(livescan.paket_pruefen(_fremd, _aus) != "",
+           "und wird darum abgelehnt")
+
+# ------------------------------------------------- Der Tausch selbst
+_z = os.path.join(_upd, "ziel")
+_n = os.path.join(_upd, "neu")
+os.makedirs(_z, exist_ok=True)
+os.makedirs(_n, exist_ok=True)
+pathlib.Path(_z, "alt.txt").write_text("alt")
+pathlib.Path(_n, "neu.txt").write_text("neu")
+if livescan.IST_WINDOWS:
+    _halt = subprocess.Popen(["ping", "-n", "60", "127.0.0.1"],
+                             stdout=subprocess.DEVNULL)
+else:
+    _halt = subprocess.Popen(["sleep", "60"])
+_helferordner = os.path.join(_upd, "helfer")
+os.makedirs(_helferordner, exist_ok=True)
+livescan.tausch_starten(_z, _n, _helferordner, warten_auf=_halt.pid)
+_bis = time.time() + 2.0
+while time.time() < _bis:
+    time.sleep(0.1)
+pruefe(os.path.exists(os.path.join(_z, "alt.txt"))
+       and not os.path.exists(os.path.join(_z, "neu.txt")),
+       "solange der Scanner läuft, rührt der Helfer nichts an")
+_halt.terminate()
+_halt.wait()
+_bis = time.time() + 20.0
+while time.time() < _bis and not os.path.exists(os.path.join(_z, "neu.txt")):
+    time.sleep(0.2)
+pruefe(os.path.exists(os.path.join(_z, "neu.txt")),
+       "sobald er beendet ist, steht die neue Fassung an seiner Stelle")
+pruefe(not os.path.exists(os.path.join(_z, "alt.txt")),
+       "und die alte ist weg, nicht danebengelegt")
+
+# ------------------------------------------------- Das Fenster dazu
+_w, _a = fenster()
+try:
+    _a.update_fenster("9.9.9", "https://beispiel.test/neu",
+                      "https://beispiel.test/p.zip")
+    _w.update()
+    _oben = [k for k in _w.winfo_children() if isinstance(k, tk.Toplevel)]
+    pruefe(len(_oben) == 1, "der Hinweis öffnet ein Fenster, statt den "
+                            "Browser aufzureißen")
+
+    def _beschriftungen(widget, hinein=None):
+        hinein = [] if hinein is None else hinein
+        for kind in widget.winfo_children():
+            try:
+                hinein.append(str(kind.cget("text")))
+            except Exception:
+                pass
+            _beschriftungen(kind, hinein)
+        return hinein
+
+    _t = _beschriftungen(_oben[0])
+    pruefe(any("9.9.9" in x for x in _t), "die neue Fassung steht darin")
+    pruefe(any(livescan.VERSION in x for x in _t),
+           "und daneben, was gerade läuft")
+    pruefe("Seite öffnen" in _t and "Später" in _t,
+           "Seite und Weglegen stehen zur Wahl")
+    pruefe("Jetzt aktualisieren" not in _t,
+           "aus dem Quelltext gestartet fehlt der Knopf – er hätte nichts "
+           "zu ersetzen")
+    pruefe(any("git" in x for x in _t),
+           "und es steht da, warum er fehlt, statt ihn tot anzubieten")
+finally:
+    _w.destroy()
+
+# Und derselbe Fall mit etwas, das sich ersetzen ließe.
+_echt_ort = livescan.eigener_ort
+_scheinbar = os.path.join(ORDNER, "Schein.app")
+os.makedirs(_scheinbar, exist_ok=True)
+livescan.eigener_ort = lambda *_a, **_k: _scheinbar
+_w, _a = fenster()
+try:
+    _a.update_fenster("9.9.9", "https://beispiel.test/neu",
+                      "https://beispiel.test/p.zip")
+    _w.update()
+    _oben = [k for k in _w.winfo_children() if isinstance(k, tk.Toplevel)]
+    _t = _beschriftungen(_oben[0])
+    pruefe("Jetzt aktualisieren" in _t,
+           "wo etwas zu ersetzen ist, steht der Knopf da")
+    _a.update_fenster("9.9.9", "https://beispiel.test/neu", "")
+    _w.update()
+    _ohne = [k for k in _w.winfo_children() if isinstance(k, tk.Toplevel)][-1]
+    pruefe("Jetzt aktualisieren" not in _beschriftungen(_ohne),
+           "ohne Paket wird keine Aktualisierung versprochen")
+finally:
+    _w.destroy()
+    livescan.eigener_ort = _echt_ort
+
+pruefe("Quarantäne" in _roh_upd.split("def update_fenster")[1][:900],
+       "im Fenster steht, warum der Scanner selbst lädt statt des Browsers")
+pruefe("webbrowser.open(seite)" in _roh_upd.split("def update_fenster")[1],
+       "der Weg über die Seite bleibt daneben stehen")
+
 # ============================================================ Bilanz
 print("\n" + "─" * 58)
 print("\033[1m%d Proben bestanden, %d fehlgeschlagen\033[0m"
@@ -1732,5 +1947,5 @@ print("\033[1m%d Proben bestanden, %d fehlgeschlagen\033[0m"
 for p in (livescan.EINSTELLUNGEN, livescan.VERLAUF_DATEI):
     if os.path.exists(p):
         os.remove(p)
-os.rmdir(ORDNER)
+shutil.rmtree(ORDNER, ignore_errors=True)
 raise SystemExit(1 if bilanz["schlecht"] else 0)
