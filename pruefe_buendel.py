@@ -24,7 +24,15 @@ import sys
 import time
 
 WARTEN = 12
-VERDAECHTIG = ("Traceback", "Launch error", "Error", "error:")
+
+# **Verlangt wird Stille, nicht die Abwesenheit bekannter Woerter.** Am
+# 04.09.2026 ist ein Buendel hier als heil durchgegangen, das Python gar
+# nicht laden konnte: dyld schrieb seitenlang "code signature ... not valid
+# for use in process", und keines der gesuchten Woerter kam darin vor. Eine
+# Liste verdaechtiger Woerter kennt immer nur die Fehler von gestern.
+#
+# Eine heile App sagt beim Start nichts. Also ist jede Ausgabe ein Grund
+# zum Hinsehen - lieber einmal zu viel als noch so ein Durchrutscher.
 
 
 def main(app):
@@ -90,9 +98,9 @@ def main(app):
     if not lebt:
         print("FEHL: die App ist gestorben (Rueckgabe %s)" % p.returncode)
         return 1
-    schlimm = [w for w in VERDAECHTIG if w in gesammelt]
-    if schlimm:
-        print("FEHL: die App meldet beim Start:", ", ".join(schlimm))
+    if gesammelt.strip():
+        print("FEHL: die App meldet beim Start etwas - siehe oben.")
+        print("      Eine heile App sagt hier nichts.")
         return 1
     print("ok   die App kommt hoch und meldet nichts")
     return 0
