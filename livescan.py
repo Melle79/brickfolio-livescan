@@ -36,6 +36,7 @@ import base64
 import hashlib
 import io
 import json
+import ntpath
 import os
 import queue
 import shutil
@@ -4067,7 +4068,10 @@ def eigener_ort(ausfuehrbar: str = "", art: object = "?") -> str:
     – der Ordner drumherum ist es.
 
     Beides kommt als Parameter herein statt aus `sys`, damit sich der Weg
-    für **beide** Systeme auf jedem einzelnen prüfen lässt.
+    für **beide** Systeme auf jedem einzelnen prüfen lässt. Gerechnet wird
+    darum mit `ntpath` statt `os.path`: Das versteht **beide** Trenner, wo
+    `os.path` unter Windows aus einem Mac-Pfad Backslashes machte und die
+    Probe dort scheitern ließ, ohne dass am Programm etwas falsch war.
     """
     ausfuehrbar = ausfuehrbar or sys.executable
     if art == "?":
@@ -4076,9 +4080,9 @@ def eigener_ort(ausfuehrbar: str = "", art: object = "?") -> str:
         # Aus dem Quelltext gestartet: Da ist nichts zu tauschen, und wer so
         # startet, holt sich die neue Fassung mit git.
         return ""
-    ordner = os.path.dirname(os.path.abspath(ausfuehrbar))
+    ordner = ntpath.dirname(ausfuehrbar)
     if art == "macosx_app":
-        buendel = os.path.dirname(os.path.dirname(ordner))
+        buendel = ntpath.dirname(ntpath.dirname(ordner))
         return buendel if buendel.endswith(".app") else ""
     return ordner
 

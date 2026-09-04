@@ -1764,7 +1764,7 @@ pruefe(livescan.eigener_ort("/Programme/Scanner.app/Contents/MacOS/Scanner",
 pruefe(livescan.eigener_ort("/wo/anders/Scanner", "macosx_app") == "",
        "was nicht in einem Bündel liegt, wird nicht angerührt")
 pruefe(livescan.eigener_ort(r"C:\Prog\Scanner\Scanner.exe", True)
-       == os.path.dirname(os.path.abspath(r"C:\Prog\Scanner\Scanner.exe")),
+       == r"C:\Prog\Scanner",
        "unter Windows ist es der Ordner um die Programmdatei")
 pruefe(livescan.eigener_ort("/egal/livescan.py", None) == "",
        "aus dem Quelltext gestartet gibt es nichts zu ersetzen")
