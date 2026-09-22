@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Brickfolio Live-Scanner – Ausschnitt vom Bildschirm an die App schicken.
 
-Gedacht für Auktions-Streams: Der Verkäufer hält eine Figur hoch, ihr zieht
+Gedacht für Auktions-Streams: Der Verkäufer hält eine Figur hoch, du ziehst
 einen Rahmen darum, und der Treffer steht mit Nummer, Ø-Preisen und
 „habt ihr schon" da – ohne Bildschirmfoto, ohne Datei, ohne Ziehen und
 Ablegen.
@@ -72,7 +72,7 @@ from tkinter import ttk
 
 # Steht auch im Info.plist des Bündels. setup.py liest sie von hier,
 # damit sie nicht an zwei Stellen auseinanderläuft; pruefung.py wacht darüber.
-VERSION = "1.7.0"
+VERSION = "1.8.0"
 
 # Auf welchem System laufen wir? Der Mac-Weg bleibt unangetastet; fuer
 # Windows stehen daneben eigene Zweige. Alles andere (Linux) faellt auf den
@@ -152,7 +152,7 @@ def schreiben(daten: dict) -> None:
     with open(EINSTELLUNGEN, "w") as f:
         json.dump(daten, f, indent=1)
     if not IST_WINDOWS:
-        # 0600 – nur fuer euch lesbar. Windows kennt diese Rechte nicht;
+        # 0600 – nur fuer dich lesbar. Windows kennt diese Rechte nicht;
         # dort schuetzt allein, dass die Datei im Benutzerprofil liegt.
         os.chmod(EINSTELLUNGEN, stat.S_IRUSR | stat.S_IWUSR)
 
@@ -386,7 +386,7 @@ class Instanz:
         """Jahr, Ø-Preise und „wie oft habt ihr das schon".
 
         Zwei Stufen, genau wie die App sie nimmt: Ohne `detail` kommt nur,
-        was schon in eurer Datenbank steht – sofort da, aber leer bei einer
+        was schon in deiner Datenbank steht – sofort da, aber leer bei einer
         Figur, die ihr noch nie hattet. Mit `detail=1` fragt die Instanz
         **BrickLink**. Das dauert einen Moment, liefert aber auch für
         Unbekanntes einen Preis.
@@ -561,7 +561,7 @@ def _woanders(info: dict) -> str:
         # **Versiegelt oder offen** – das ist beim Mitbieten der ganze
         # Unterschied. Im neuen Set steckt die Figur noch, im gebrauchten
         # stünde sie längst einzeln in der Sammlung.
-        teile.append("🧩 steckt in eurem {}Set {} ({}){}".format(
+        teile.append("🧩 steckt in deinem {}Set {} ({}){}".format(
             "ungeöffneten " if zustand == "new" else "",
             nummer, _kurz(name, 40),
             "" if anzahl <= 1 else " ×{}".format(anzahl)))
@@ -648,7 +648,7 @@ def _schon_da(info: dict) -> bool:
     die Sammlung ein. Steht eine Figur also nicht in der Sammlung, hat er
     sie auch nicht – viele Sets kommen ohne Figuren herein. Der grüne
     Rahmen hieß dann „hast du schon", während die Zeile darunter „noch
-    nicht in eurer Sammlung" sagte, und von beiden hatte nur die Zeile
+    nicht in deiner Sammlung" sagte, und von beiden hatte nur die Zeile
     recht.
 
     **Ein neues Set dagegen zählt sehr wohl**: Es ist versiegelt, die
@@ -679,7 +679,7 @@ def _besitz_zeile(info: dict) -> dict:
 
     - **In der Sammlung.** Die klare Antwort.
     - **Nicht in der Sammlung, aber auf einer Einkaufsliste.** Vorher stand
-      hier „— noch nicht in eurer Sammlung", während der Rahmen grün
+      hier „— noch nicht in deiner Sammlung", während der Rahmen grün
       leuchtete – zwei Aussagen, die sich widersprachen. Jetzt steht dort,
       **auf welcher Liste** sie liegt; das ist die Antwort, die im Stream
       zählt.
@@ -691,7 +691,7 @@ def _besitz_zeile(info: dict) -> dict:
     """
     habe = info.get("owned") or 0
     if habe:
-        return {"text": "✔ {}× in eurer Sammlung".format(habe),
+        return {"text": "✔ {}× in deiner Sammlung".format(habe),
                 "foreground": "#1a7f37"}
     listen = info.get("on_lists") or []
     if len(listen) == 1:
@@ -706,7 +706,7 @@ def _besitz_zeile(info: dict) -> dict:
         return {"text": "📦 steckt im ungeöffneten Set {}".format(
                     ", ".join(s[0] for s in versiegelt[:2])),
                 "foreground": "#1a7f37"}
-    return {"text": "— noch nicht in eurer Sammlung",
+    return {"text": "— noch nicht in deiner Sammlung",
             "foreground": "#8a6d00"}
 
 
@@ -715,7 +715,7 @@ def _schon_da_marke(info: dict) -> str:
 
     Grün heißt „hast du schon", und das hat drei mögliche Gründe. Ohne
     Unterscheidung stand am 30.08.2026 eine grüne Zeile über der
-    Erklärung „— noch nicht in eurer Sammlung", und das las sich wie ein
+    Erklärung „— noch nicht in deiner Sammlung", und das las sich wie ein
     Widerspruch: Die Figur steckte in einem eigenen Set und lag auf einer
     Liste, war aber nicht als eigener Eintrag erfasst.
 
@@ -781,7 +781,7 @@ def _kurz(text: str, laenge: int) -> str:
 
 
 def _eigene_sets(info: dict) -> list:
-    """Sets aus **eurer** Sammlung, in denen diese Figur steckt.
+    """Sets aus **deiner** Sammlung, in denen diese Figur steckt.
 
     `in_sets` kommt als "nummer|name|anzahl|zustand;;…". Das vierte Feld
     gibt es seit App-Fassung 2.76.0; fehlt es, gilt „gebraucht" – das ist
@@ -2160,7 +2160,7 @@ class LiveScanner:
         # einer Zeile bräuchte zwei Farben.
         self.woanders = ttk.Label(r, text="", foreground=FARBEN["verweis"])
         self.woanders.pack(fill="x", pady=(1, 0))
-        # Dritte Zeile: der Katalog, nicht euer Bestand. Blasser gesetzt,
+        # Dritte Zeile: der Katalog, nicht dein Bestand. Blasser gesetzt,
         # weil sie beim Mitbieten seltener zählt als die beiden darüber.
         self.setliste = ttk.Label(r, text="", foreground=FARBEN["leise"])
         self.setliste.pack(fill="x", pady=(1, 0))
@@ -2273,7 +2273,7 @@ class LiveScanner:
         r.pack(fill="both", expand=True)
         ttk.Label(r, text="Fassung %s ist da." % fassung,
                   font=("Helvetica", 14, "bold")).pack(anchor="w")
-        ttk.Label(r, text="Ihr habt %s." % VERSION,
+        ttk.Label(r, text="Du hast %s." % VERSION,
                   foreground=FARBEN["leise"]).pack(anchor="w", pady=(0, 10))
 
         stand = ttk.Label(r, text="", wraplength=330,
@@ -2501,7 +2501,7 @@ class LiveScanner:
         """Zwischen der Wunschfarbe und dem Grund hin und her.
 
         Gegen den **Grund**, nicht gegen Grau: Eine Figur kann auf der
-        Wunschliste stehen und trotzdem schon in einem eurer Sets stecken.
+        Wunschliste stehen und trotzdem schon in einem deiner Sets stecken.
         Dann soll das Grün nicht verschwinden, sondern das Blinken darüber
         laufen – beide Nachrichten bleiben lesbar.
         """

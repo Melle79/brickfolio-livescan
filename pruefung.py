@@ -1020,7 +1020,7 @@ pruefe(len(raus) == 1, "ein ruhiges Bild löst nur beim Einschalten aus")
 # ============================================================ Warum grün?
 abschnitt("Die Marke sagt, warum die Zeile grün ist")
 
-# Am 30.08.2026: Grüne Zeile über der Erklärung „— noch nicht in eurer
+# Am 30.08.2026: Grüne Zeile über der Erklärung „— noch nicht in deiner
 # Sammlung". Die Figur steckte in einem eigenen Set und lag auf einer
 # Liste, war aber nicht als eigener Eintrag erfasst. Grün war richtig,
 # nur sagte nichts, warum.
@@ -1064,16 +1064,16 @@ pruefe(not livescan._schon_da({"wanted": 1}),
        "ein Wunsch allein färbt nicht grün")
 
 # Die Zeile darunter beantwortet „habe ich das?" – und nennt die Liste.
-pruefe("2× in eurer Sammlung" in livescan._besitz_zeile({"owned": 2})["text"],
+pruefe("2× in deiner Sammlung" in livescan._besitz_zeile({"owned": 2})["text"],
        "Besitz steht als Besitz da")
 pruefe("Flohmarkt 30.08." in livescan._besitz_zeile(AUF_LISTE)["text"],
        "ohne Besitz, aber auf einer Liste -> die Liste steht da")
 pruefe("noch nicht" not in livescan._besitz_zeile(AUF_LISTE)["text"],
-       "und nicht mehr »noch nicht in eurer Sammlung«")
+       "und nicht mehr »noch nicht in deiner Sammlung«")
 zwei = livescan._besitz_zeile({"on_lists": ["A", "B"]})["text"]
 pruefe("2 Einkaufslisten" in zwei and "A, B" in zwei,
        "bei mehreren Listen stehen Anzahl und Namen da")
-pruefe("noch nicht in eurer Sammlung" in livescan._besitz_zeile(IN_SET)["text"],
+pruefe("noch nicht in deiner Sammlung" in livescan._besitz_zeile(IN_SET)["text"],
        "ein eigenes Set ändert an der Antwort nichts")
 
 # Und die Liste steht nur noch an einer Stelle.

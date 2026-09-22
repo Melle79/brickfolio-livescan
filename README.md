@@ -52,10 +52,10 @@ neuer**. Nur dieser Weg, nicht die fertige App.
 > taugliche – hier das aus Homebrew (Tk 9.0). Die fertige App hat das
 > Problem nicht, sie trägt ihr Tk 9.0 im Bündel. Startet ihr
 > `livescan.py` direkt mit einem zu alten Python, sagt es das und beendet
-> sich, statt euch vor eine leere Fläche zu setzen.
+> sich, statt dich vor eine leere Fläche zu setzen.
 
 Beim ersten Start fragt es nach Adresse, Benutzername und Passwort. Der
-Zugang landet in `~/.brickfolio-livescan.json`, nur für euch lesbar (0600).
+Zugang landet in `~/.brickfolio-livescan.json`, nur für dich lesbar (0600).
 Gespeichert wird der **Token**, nicht das Passwort.
 
 > **Berechtigung.** Beim ersten Bildschirmfoto fragt macOS nach
@@ -67,7 +67,7 @@ Gespeichert wird der **Token**, nicht das Passwort.
 ## Bedienen
 
 **▣ Rahmen ziehen und senden** – der eine Knopf, um den es geht. Das Fenster
-verschwindet kurz, ihr zieht mit der Maus einen Rahmen um die Figur, und
+verschwindet kurz, du ziehst mit der Maus einen Rahmen um die Figur, und
 genau dieser Ausschnitt geht zur Erkennung. Das ist macOS' eigene Auswahl:
 Maße stehen dabei, Leertaste verschiebt den Rahmen, **Esc** bricht ab.
 Die **Eingabetaste** löst dasselbe aus.
@@ -99,8 +99,8 @@ Preise, „habt ihr schon" und die drei Knöpfe beziehen sich ab dann auf
 
 **Ein 🛒 vor einer Zeile** und ihr blasser grüner Grund heißen: *diese*
 Variante habt ihr schon – in der Sammlung, auf einer Liste oder in einem
-eurer Sets. Ein **☆** und ein goldener Grund heißen das Gegenteil: Die steht
-auf eurer Wunschliste. Ohne die Marken sähe man das erst nach dem Anklicken,
+deiner Sets. Ein **☆** und ein goldener Grund heißen das Gegenteil: Die steht
+auf deiner Wunschliste. Ohne die Marken sähe man das erst nach dem Anklicken,
 und gerade bei Varianten steht die richtige oft nicht obenauf:
 
 ```
@@ -114,7 +114,7 @@ zweites Exemplar wünscht.
 
 ## Bedienen
 
-Darüber stehen **zwei Bilder nebeneinander**: links eure Aufnahme, rechts
+Darüber stehen **zwei Bilder nebeneinander**: links deine Aufnahme, rechts
 das **Katalogbild von BrickLink** zur gewählten Figur. So seht ihr auf einen
 Blick, ob der Vorschlag passt – bei zwei Varianten mit 77 % und 71 % sagt
 die Zahl allein wenig, das Bild dagegen sofort. Wechselt ihr die Zeile in
@@ -129,13 +129,13 @@ hängt die Entscheidung an der Bedruckung, und die sieht man im Daumennagel
 nicht.
 
 Es ist ein rahmenloses Popup, kein Fenster: **Der nächste Klick schließt es**,
-egal ob darauf oder daneben, und **Esc** genauso. Ihr müsst also nichts
+egal ob darauf oder daneben, und **Esc** genauso. Du musst also nichts
 wegklicken, bevor es weitergeht — im Stream zählt jede Sekunde.
 
 **Wird die ganze Fläche hinter beiden Bildern grün**, heißt das schlicht:
 **Habt ihr schon.** Drei Gründe lösen es aus – die Figur steht in der
 Sammlung, sie liegt auf einer offenen Einkaufsliste, oder sie steckt in einem
-Set, das bei euch daheim steht. Im Stream schaut man auf das Bild, nicht auf
+Set, das bei dir daheim steht. Im Stream schaut man auf das Bild, nicht auf
 die Zeile darunter, und eine Farbfläche sieht man aus dem Augenwinkel,
 während der Verkäufer schon weiterredet.
 
@@ -152,7 +152,7 @@ Einen Wunsch zu verpassen ist teurer: Er ist der Grund, aus dem ihr überhaupt
 zuschaut, und er kommt vielleicht monatelang nicht wieder.
 
 Geblinkt wird gegen den jeweiligen Grund, nicht gegen Grau. Steht die Figur
-auf der Wunschliste **und** in einem eurer Sets, bleibt das Grün also
+auf der Wunschliste **und** in einem deiner Sets, bleibt das Grün also
 sichtbar und das Gold läuft darüber — beide Nachrichten bleiben lesbar.
 
 **Der Ton gilt dem ganzen Scan, nicht nur dem obersten Vorschlag.** Bei
@@ -179,18 +179,18 @@ Unter dem Namen stehen drei Zeilen, und sie beantworten drei verschiedene
 Fragen:
 
 ```
-✔ 2× in eurer Sammlung
-☆ auf der Wunschliste   🛒 auf »Flohmarkt 02.08.«   🧩 steckt in eurem Set 75168-1 (Yoda's Jedi Starfighter)
+✔ 2× in deiner Sammlung
+☆ auf der Wunschliste   🛒 auf »Flohmarkt 02.08.«   🧩 steckt in deinem Set 75168-1 (Yoda's Jedi Starfighter)
 📦 aus 4 Sets: 75233-1 Droid Gunship,  75142-1 Homing Spider Droid,  75255-1 Yoda,  +1 weitere
 ```
 
 Die **erste** Zeile ist der Bestand – grün, wenn ihr die Figur habt, sonst
-gelb. Die **zweite** sagt, ob ihr sie euch schon irgendwo vorgemerkt habt:
-Wunschliste, offene Einkaufslisten (mit Namen) und die Sets aus **eurer**
+gelb. Die **zweite** sagt, ob du sie dir schon irgendwo vorgemerkt hast:
+Wunschliste, offene Einkaufslisten (mit Namen) und die Sets aus **deiner**
 Sammlung, in denen sie steckt. Die **dritte** ist der Katalog – aus welchen
 Sets die Figur überhaupt stammt.
 
-Das ist der Unterschied, auf den es beim Mitbieten ankommt: Zeile 2 ist euer
+Das ist der Unterschied, auf den es beim Mitbieten ankommt: Zeile 2 ist dein
 Bestand, Zeile 3 ist Allgemeinwissen. Eine Figur, die schon auf einer Liste
 liegt, kauft man sonst zum zweiten Mal.
 
@@ -211,7 +211,7 @@ gehabt mit.
 
 **Zieht das Fenster breit** – die Zeilen brechen dort um, wo das Fenster
 endet, nicht an einer festen Marke. Bei einer Figur aus dreißig Sets stehen
-trotzdem nicht alle da: Zeile 2 zeigt vier eurer Sets, Zeile 3 acht aus dem
+trotzdem nicht alle da: Zeile 2 zeigt vier deiner Sets, Zeile 3 acht aus dem
 Katalog, dahinter jeweils „und N weitere".
 
 **Zustand und Einkauf** stehen darüber und gelten für „＋ Sammlung" und
@@ -255,7 +255,7 @@ Das **⟳3** heißt: drei Ansichten, eine Figur. Zusammengefasst wird nur, was
 etwas ganz anderes dazwischen oder bucht ihr, fängt die nächste Begegnung eine
 eigene Zeile an — sonst verschwände, dass ihr sie inzwischen gekauft habt.
 
-**Eure eigene Aufnahme zählt mit.** Wenn der Wächter eine Figur nur mäßig
+**Deine eigene Aufnahme zählt mit.** Wenn der Wächter eine Figur nur mäßig
 erkannt hat und ihr von Hand nachhelft, gehört das zur selben Figur und
 landet in derselben Zeile. Dafür ist mehr Zeit als beim Wächter: Der nimmt
 25 Sekunden, von Hand sind es drei Minuten — Fenster weg, Rahmen ziehen,
@@ -287,7 +287,7 @@ Bisher war sie weg, die Aufnahme besonders – die gibt es kein zweites Mal.
 
 Danach tun die drei Knöpfe genau das, was sie damals getan hätten, und
 „📷 Foto mitspeichern" hängt **die Aufnahme von damals** an den Artikel, nicht
-die letzte. In der Statuszeile steht dabei, wo ihr seid:
+die letzte. In der Statuszeile steht dabei, wo du bist:
 
 ```
 ↩ Stand von 22:37 – Buchen legt diesen Treffer an.
@@ -314,14 +314,14 @@ mitten im Abarbeiten auf eine andere.
 **＋ Liste** legt eine neue an, ohne dass ihr in die App wechseln müsst. Genau
 das ist im Stream der Engpass: Man kauft bei jemand Neuem, hat keine Liste
 dafür, und bis eine angelegt ist, ist der Artikel weg. Im Namensfeld steht
-schon das heutige Datum, so wie eure Listen ohnehin heißen („Flohmarkt 04.08.") –
+schon das heutige Datum, so wie deine Listen ohnehin heißen („Flohmarkt 04.08.") –
 davor nur noch den Verkäufer tippen. Die neue Liste ist danach gleich
 ausgewählt.
 
 **📷 Foto mitspeichern** (Haken, standardmäßig an) – landet der Treffer in
 Sammlung, Wunschliste oder auf einer Liste, wird der Ausschnitt zusätzlich als
 **eigenes Foto** an den Artikel gehängt. Das ist dieselbe Funktion wie das
-Kästchen über den Scan-Treffern in der App: Das Katalogbild bleibt, euer Foto
+Kästchen über den Scan-Treffern in der App: Das Katalogbild bleibt, dein Foto
 kommt in der Galerie daneben.
 
 **Einmal je Artikel und Aufnahme, nicht je Buchung.** Wer dieselbe Figur erst
@@ -369,7 +369,7 @@ von da an läuft alles wie immer, mit allen Knöpfen, dem Kästchen fürs eigene
 Foto und der Reihum-Suche bei mehreren Figuren.
 
 Dafür braucht die App nichts Neues zu können: Einfügen mit ⌘V beherrscht ihr
-Scannen-Feld ohnehin. Das Werkzeug spart euch nur das Bildschirmfoto, den
+Scannen-Feld ohnehin. Das Werkzeug spart dir nur das Bildschirmfoto, den
 Finder und das Ziehen.
 
 ## Von selbst auslösen
@@ -377,7 +377,7 @@ Finder und das Ziehen.
 **⏱ Von selbst, wenn sich im Bereich etwas tut** – der Haken unter den
 Bereichsknöpfen. Ist er gesetzt, schaut der Scanner dem gemerkten Bereich zu
 und schickt den Ausschnitt, sobald dort eine neue Figur hochgehalten wird.
-Ihr müsst nichts mehr drücken.
+Du musst nichts mehr drücken.
 
 Das ist nicht nur bequemer, es trifft auch besser: Ausgelöst wird erst, wenn
 das Bild **still steht**. Von Hand drückt man, wenn man die Figur sieht – und
@@ -400,18 +400,18 @@ hinterher, was der Wächter getan hat und was ihr selbst ausgelöst habt.
 > **Das Fenster darf nicht über dem Bereich liegen.** Es wird beim
 > automatischen Auslösen nicht weggeblendet – sonst flackerte es alle paar
 > Sekunden –, und dann fotografierte der Scanner sich selbst. Er prüft das
-> beim Einschalten und sagt es, statt euch eine Reihe sinnloser Erkennungen
+> beim Einschalten und sagt es, statt dir eine Reihe sinnloser Erkennungen
 > zu bescheren.
 
 **Gebucht wird nie von selbst.** In Sammlung, Wunschliste oder auf eine Liste
-kommt nur, was ihr anklickt. Der Wächter nimmt euch das Drücken ab, nicht das
+kommt nur, was du anklickst. Der Wächter nimmt dir das Drücken ab, nicht das
 Entscheiden.
 
 ## Es überschwemmt die Erkennung nicht
 
 **Ein Auslöser = eine Anfrage**, auch mit Automatik. Die Erkennung dahinter
 (Brickognize) wird kostenlos bereitgestellt, und ein Videostream hätte 25
-Bilder je Sekunde, von denen 24 dasselbe zeigen. Eure Instanz bremst
+Bilder je Sekunde, von denen 24 dasselbe zeigen. Deine Instanz bremst
 zusätzlich bei 40 Erkennungen je Minute.
 
 Deshalb verlässt beim Zuschauen **kein einziges Bild diesen Rechner**.
@@ -432,7 +432,7 @@ Unter der Trefferliste steht immer ein Feld:
 Das reicht oft schneller zum Ziel als ein zweiter Versuch — die Nummer wird in
 vielen Streams angesagt oder eingeblendet. Danach ist alles wie bei einem
 erkannten Treffer: Katalogbild, Preise, „habt ihr schon", die drei Knöpfe.
-Auch euer Ausschnitt bleibt stehen, das mitgespeicherte Foto hängt also an der
+Auch dein Ausschnitt bleibt stehen, das mitgespeicherte Foto hängt also an der
 richtigen Figur.
 
 **Es kommt zu den Vorschlägen dazu, es ersetzt sie nicht.** Der häufigere Fall
@@ -448,7 +448,7 @@ den Ständer.
 
 Die nachgetragene Zeile ist gleich ausgewählt und trägt ein **✎** statt einer
 Trefferquote — geraten hat da ja niemand. Die Vorschläge bleiben stehen, falls
-ihr euch vertippt habt, und im Verlauf steht eine eigene Zeile, die zu genau
+du dich vertippt hast, und im Verlauf steht eine eigene Zeile, die zu genau
 diesem Stand zurückführt.
 
 Das Feld stand früher **nur** da, wenn gar nichts erkannt wurde. Solange
@@ -562,7 +562,7 @@ Wichtig, denn „Nichts erkannt" wäre gelogen — man suchte den Fehler beim
 Rahmen statt beim Haken.
 
 **Für getippte Nummern gilt er nicht.** Wer eine Setnummer eintippt, meint das
-Set; der Haken ist gegen Fehlerkennungen da, nicht gegen euren eigenen Willen.
+Set; der Haken ist gegen Fehlerkennungen da, nicht gegen deinen eigenen Willen.
 Und für ältere Verlaufszeilen gilt er auch nicht rückwirkend — was einmal in
 der Liste stand, bleibt beim Zurückspringen auffindbar.
 
@@ -614,9 +614,9 @@ Auf der Platte bleibt damit nur:
 
 | | |
 |---|---|
-| `~/.brickfolio-livescan.json` | Adresse, Benutzername, **Token** (nicht das Passwort), gemerkter Bereich, Zustand, Empfindlichkeit, Haken. Nur für euch lesbar (0600). |
+| `~/.brickfolio-livescan.json` | Adresse, Benutzername, **Token** (nicht das Passwort), gemerkter Bereich, Zustand, Empfindlichkeit, Haken. Nur für dich lesbar (0600). |
 | `~/.brickfolio-livescan-verlauf.json` | die letzten 20 Verlaufszeilen – Uhrzeit, Nummern, Namen, Trefferquoten. **Keine Bilder.** Ebenfalls 0600. |
-| eure Instanz | die Fotos, die ihr mit **📷 Foto am Artikel mitspeichern** bewusst an einen Artikel gehängt habt |
+| deine Instanz | die Fotos, die du mit **📷 Foto am Artikel mitspeichern** bewusst an einen Artikel gehängt hast |
 
 ## Prüfen, ob noch alles stimmt
 
@@ -625,7 +625,7 @@ Auf der Platte bleibt damit nur:
 ```
 
 Über hundert Proben am **verborgenen** Fenster: kein Bildschirmfoto, keine
-Anfrage an die Instanz, keine Änderung an euren Einstellungen. Statt der
+Anfrage an die Instanz, keine Änderung an deinen Einstellungen. Statt der
 Instanz steht eine Attrappe, statt der Bildschirmabzüge ein Drehbuch. Läuft in
 ein paar Sekunden durch und sagt am Ende, was durchgefallen ist.
 
@@ -728,7 +728,7 @@ unter Windows. Der Preis: Ein langlebiges Geheimnis liegt in
 ### Weg 2: der Knopf im Zugangsfenster — ohne neue Richtlinie
 
 Unter **Zugang …** steht **🌐 Über Cloudflare anmelden …**. Ein Klick, der
-Browser öffnet sich, ihr meldet euch **wie gewohnt** mit E-Mail und
+Browser öffnet sich, du meldest dich **wie gewohnt** mit E-Mail und
 Zugangscode an — fertig. Danach auf *Anmelden*.
 
 **`cloudflared` reist im Paket mit** – es ist nichts nachzuinstallieren.
@@ -879,7 +879,7 @@ Die App ist für **Apple Silicon** gebaut (M1 und neuer). Auf Intel-Macs
 läuft sie nicht; dort startet man `livescan.py` von Hand.
 
 ### Beim ersten Start
-Der Scanner fragt nach der Adresse eurer Brickfolio-Instanz und einem
+Der Scanner fragt nach der Adresse deiner Brickfolio-Instanz und einem
 Token. Beides landet in `~/.brickfolio-livescan.json` – im Benutzerordner,
 nicht in der App. Ein Austausch der App lässt die Anmeldung also stehen.
 
@@ -973,7 +973,7 @@ fehlschlagen, sonst prüft sie nichts.
 ## Quellen und Rechtliches
 
 Preise, Namen und Bilder stammen von **BrickLink** über deren offizielle
-Schnittstelle, mit einem Zugang, der auf euren Namen läuft. Die Seiten von
+Schnittstelle, mit einem Zugang, der auf deinen Namen läuft. Die Seiten von
 BrickLink werden nicht abgerufen – deren Nutzungsbedingungen erlauben das
 nicht.
 
@@ -982,7 +982,7 @@ unterstützt noch autorisiert hat. Ebenso wenig BrickLink.
 
 ## Lizenz und Haftung
 
-MIT – siehe [LICENSE](LICENSE). Im Klartext: Macht damit, was ihr wollt.
+MIT – siehe [LICENSE](LICENSE). Im Klartext: Mach damit, was du willst.
 Aber es ist ein Feierabendwerkzeug für den eigenen Gebrauch, keine
 geprüfte Software. Es kommt **ohne jede Gewährleistung**; für Schäden,
 verlorene Daten, falsche Preise oder Fehlkäufe haftet niemand. Wer damit
