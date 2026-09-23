@@ -87,11 +87,27 @@ jobs:
           name: Brickfolio-Live-Scanner-macOS-arm64
           path: dist/Brickfolio-Live-Scanner-macOS-arm64.zip
 
-      - name: Ans Release hängen
-        if: startsWith(github.ref, 'refs/tags/v')
-        uses: softprops/action-gh-release@v2
-        with:
-          files: dist/Brickfolio-Live-Scanner-macOS-arm64.zip
+      # **Hier wird bewusst nichts ans Release gehaengt.**
+      #
+      # Der Runner hat den privaten Schluessel nicht und unterschreibt ad
+      # hoc. Ein so gebautes Paket ist fuer jede bestehende Installation
+      # ein *fremdes*: Die Selbsterneuerung lehnt es ab, und eingespielt
+      # haette es die Freigabe fuer die Bildschirmaufnahme gekostet - also
+      # genau das, wogegen das Zertifikat ueberhaupt da ist.
+      #
+      # Den Schluessel hierher zu legen wuerde zwei Dinge zusammenfallen
+      # lassen, die getrennt gehoeren: wer das Repo beherrscht, und wer
+      # unterschreiben kann. Das macOS-Paket kommt deshalb von Svens Mac,
+      # per `sh release.sh`.
+      #
+      # Der Bau hier bleibt trotzdem: Er beweist bei jedem Push, dass das
+      # Buendel baut, nicht an Homebrew haengt und startet. Als Artefakt
+      # ist es abholbar, nur eben nicht als Auslieferung.
+      #
+      # Solange release.sh nicht gelaufen ist, haengt am Release kein
+      # macOS-Paket - `paket_waehlen()` liefert dann "", und der Scanner
+      # bietet nur die Seite an, statt eine Aktualisierung zu versprechen,
+      # die er nicht halten kann.
 
   windows:
     # Fuer Windows-Rechner. Gebaut wird mit PyInstaller, weil py2app nur macOS
