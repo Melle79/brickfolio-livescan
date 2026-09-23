@@ -129,10 +129,21 @@ gh release upload "$MARKE" "dist/$PAKET" --repo "$REPO" --clobber
 # **Nachsehen, nicht hoffen.** Was hochgeladen wurde, wird wieder geholt
 # und geprueft - genau so, wie der Scanner es spaeter holt. Ein Paket,
 # das unterwegs kaputtgeht, faellt hier auf und nicht beim Anwender.
+#
+# **Ueber browser_download_url, nicht ueber `gh release download`.** Das
+# ist der Weg, den `paket_waehlen()` im Scanner nimmt - und nur der zaehlt.
+# `gh` geht statt dessen ueber die Kennung des Anhangs aus der API, und
+# die kann veraltet sein: Am 23.09.2026 meldete die API nach dem Hochladen
+# minutenlang noch den alten Anhang samt Kennung, Groesse und Zeit, waehrend
+# die Auslieferung laengst das neue Paket gab. Ein `gh release download`
+# lief dabei ins 404, und wer den Metadaten glaubt, haelt eine gelungene
+# Auslieferung fuer kaputt.
 echo "== Gegenprobe am Release =="
 PRUEFORT=$(mktemp -d)
-gh release download "$MARKE" --repo "$REPO" \
-    --pattern "$PAKET" --dir "$PRUEFORT" --clobber
+ADRESSE=$(gh api "repos/$REPO/releases/tags/$MARKE" \
+    --jq ".assets[] | select(.name == \"$PAKET\") | .browser_download_url")
+[ -n "$ADRESSE" ] || { echo "FEHLER: Kein Anhang »$PAKET« am Release." >&2; exit 1; }
+curl -sSfL -o "$PRUEFORT/$PAKET" "$ADRESSE"
 ditto -x -k "$PRUEFORT/$PAKET" "$PRUEFORT/aus"
 GELADEN=$(codesign -d -r- "$PRUEFORT/aus/Brickfolio Live-Scanner.app" 2>&1 \
     | sed -n 's/.*designated => //p')
@@ -145,7 +156,13 @@ if [ "$GELADEN" != "$ANFORDERUNG" ]; then
     exit 1
 fi
 
+# **dist/ muss weg.** Der Bau-Ordner bleibt sonst liegen und ist fuer
+# macOS eine zweite App mit derselben Kennung - man schaltet die eine in
+# der Freigabeliste frei und startet die andere. Das hat schon einmal
+# Stunden gekostet.
+rm -rf build dist
+
 echo
 echo "Fertig. $MARKE traegt jetzt ein Paket, das bestehende"
 echo "Installationen als ihresgleichen erkennen - der Knopf im Scanner"
-echo "funktioniert."
+echo "funktioniert. build/ und dist/ sind weggeraeumt."
