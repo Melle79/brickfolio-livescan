@@ -648,6 +648,14 @@ Beim Start fragt der Scanner einmal im Hintergrund bei GitHub nach, ob es
 eine neuere Fassung gibt. Nur wenn es eine gibt, erscheint unten rechts
 eine Zeile. Gibt es nichts Neues, ändert sich am Bild nichts.
 
+**Seit 1.9.1 auch, wenn GitHub die Auskunft verweigert.** Ohne Anmeldung
+erlaubt die GitHub-API 60 Abfragen je Stunde – für den ganzen
+Internetanschluss, also alle Geräte dahinter zusammen. Ist das aufgebraucht,
+schaut der Scanner auf der Release-Seite nach: `…/releases/latest` leitet
+auf die neueste Fassung weiter, und ob das Paket schon dranhängt, verrät die
+Download-Adresse, ohne dass es geladen wird. Vorher blieb der Hinweis in
+diesem Fall einfach aus.
+
 Ein Klick darauf öffnet ein kleines Fenster mit **Jetzt aktualisieren**.
 Der Scanner holt das Paket dann selbst, packt es aus, prüft es und tauscht
 sich aus; danach startet er neu. Ein Klick, sonst nichts.

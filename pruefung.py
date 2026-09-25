@@ -1729,11 +1729,57 @@ def _wirft(_antrag, timeout=None):
 
 
 livescan.urllib.request.urlopen = _wirft
+_echt_weiter_netz = livescan.weiterleitung
+# Ohne Netz geht auch der zweite Weg über die Webseite nicht.
+livescan.weiterleitung = lambda a, j="": _wirft(a)
 try:
     pruefe(livescan.neuere_fassung("1.0.0") is None,
            "ohne Netz schweigt sie, statt zu stören")
 finally:
     livescan.urllib.request.urlopen = _echt_urlopen
+    livescan.weiterleitung = _echt_weiter_netz
+
+# **Ist die API erschöpft, geht es über die Webseite.** 60 Abfragen je
+# Stunde und Anschluss – am 25.09.2026 standen sie auf 0, und der Hinweis
+# auf 1.9.0 blieb aus.
+_echt_weiter = livescan.weiterleitung
+_gefragt = []
+
+
+def _seite(adresse, jetzt=""):
+    _gefragt.append(adresse)
+    if adresse.endswith("/releases/latest"):
+        return 302, ("https://github.com/%s/releases/tag/v9.9.9"
+                     % livescan.REPO)
+    if "/releases/download/v9.9.9/" in adresse:
+        return (302 if _mit_paket else 404), ""
+    return 404, ""
+
+
+livescan.urllib.request.urlopen = _wirft
+livescan.weiterleitung = _seite
+try:
+    _mit_paket = True
+    _neu = livescan.neuere_fassung("1.9.0")
+    pruefe(_neu is not None and _neu[0] == "9.9.9",
+           "ohne API findet die Webseite die neue Fassung")
+    pruefe(_neu[1].endswith("/releases/tag/v9.9.9"), "samt Seite")
+    pruefe(_neu[2].endswith("/releases/download/v9.9.9/"
+                            + livescan.paket_name()),
+           "und dem Paket für dieses System")
+    pruefe(not any("api.github.com" in a for a in _gefragt),
+           "die Webseite fragt nicht über die API")
+    _mit_paket = False
+    pruefe(livescan.neuere_fassung("1.9.0")[2] == "",
+           "hängt das Paket noch nicht dran, bleibt es leer")
+    pruefe(livescan.neuere_fassung("9.9.9") is None,
+           "und die eigene Fassung ist auch hier kein Grund")
+    livescan.weiterleitung = lambda a, j="": (200, "")
+    pruefe(livescan.neuere_fassung("1.0.0") is None,
+           "ohne Weiterleitung schweigt sie weiter")
+finally:
+    livescan.urllib.request.urlopen = _echt_urlopen
+    livescan.weiterleitung = _echt_weiter
 
 _roh_upd = pathlib.Path(livescan.__file__).read_text()
 pruefe("daemon=True" in _roh_upd.split("_update_pruefen")[1][:200],

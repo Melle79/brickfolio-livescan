@@ -74,7 +74,7 @@ from tkinter import ttk
 
 # Steht auch im Info.plist des Bündels. setup.py liest sie von hier,
 # damit sie nicht an zwei Stellen auseinanderläuft; pruefung.py wacht darüber.
-VERSION = "1.9.0"
+VERSION = "1.9.1"
 
 # Auf welchem System laufen wir? Der Mac-Weg bleibt unangetastet; fuer
 # Windows stehen daneben eigene Zweige. Alles andere (Linux) faellt auf den
@@ -4344,15 +4344,74 @@ def neuere_fassung(jetzt: str = "") -> tuple | None:
                      "User-Agent": "Brickfolio-Live-Scanner/%s" % jetzt})
         with urllib.request.urlopen(antrag, timeout=15) as antwort:
             d = json.loads(antwort.read())
+        kennung = str(d.get("tag_name") or "")
+        seite = str(d.get("html_url")
+                    or "https://github.com/%s/releases/latest" % REPO)
+        paket = paket_waehlen(d.get("assets"))
     except Exception:
-        return None
-    kennung = str(d.get("tag_name") or "")
+        # **Die API ist nicht der einzige Weg.** Ohne Anmeldung erlaubt sie
+        # 60 Abfragen je Stunde und Anschluss – für *alle* Geräte dahinter.
+        # Am 25.09.2026 stand der Zähler auf 0, und 1.9.0 blieb unsichtbar,
+        # weil der Scanner hier schwieg. Die Webseite zählt nicht mit.
+        try:
+            gefunden = neueste_ueber_seite(jetzt)
+        except Exception:
+            gefunden = None
+        if not gefunden:
+            return None
+        kennung, seite, paket = gefunden
     if not kennung or fassungszahlen(kennung) <= fassungszahlen(jetzt):
         return None
-    return (kennung.lstrip("vV"),
-            str(d.get("html_url")
-                or "https://github.com/%s/releases/latest" % REPO),
-            paket_waehlen(d.get("assets")))
+    return (kennung.lstrip("vV"), seite, paket)
+
+
+_WEITER = (301, 302, 303, 307, 308)
+
+
+class _NichtFolgen(urllib.request.HTTPRedirectHandler):
+    """Eine Weiterleitung melden statt ihr zu folgen."""
+
+    def redirect_request(self, *_a, **_k):
+        return None
+
+
+def weiterleitung(adresse: str, jetzt: str = "") -> tuple:
+    """(Status, Ziel) einer Adresse – **ohne** der Weiterleitung zu folgen.
+
+    Folgen hieße beim Paket: 22 MB laden, nur um zu erfahren, dass es da
+    ist. Die Antwort von github.com selbst genügt – 302 heißt „liegt dort".
+    """
+    oeffner = urllib.request.build_opener(_NichtFolgen)
+    antrag = urllib.request.Request(adresse, method="HEAD", headers={
+        "User-Agent": "Brickfolio-Live-Scanner/%s" % (jetzt or VERSION)})
+    try:
+        with oeffner.open(antrag, timeout=15) as antwort:
+            return antwort.status, ""
+    except urllib.error.HTTPError as e:
+        return e.code, (e.headers.get("Location", "") if e.headers else "")
+
+
+def neueste_ueber_seite(jetzt: str = "") -> tuple | None:
+    """(Kennung, Seite, Paket) über die Webseite statt über die API.
+
+    `github.com/<repo>/releases/latest` leitet auf die neueste Fassung
+    weiter; die Kennung steht im Ziel. Ob das Paket für dieses System
+    schon dranhängt, verrät die Download-Adresse: Weiterleitung heißt ja,
+    404 heißt nein – dann bleibt das Paket leer wie bei der API.
+    """
+    code, ziel = weiterleitung(
+        "https://github.com/%s/releases/latest" % REPO, jetzt)
+    if code not in _WEITER or "/releases/tag/" not in ziel:
+        return None
+    kennung = urllib.parse.unquote(
+        ziel.rsplit("/releases/tag/", 1)[1]).split("?")[0].split("#")[0]
+    if not kennung:
+        return None
+    seite = "https://github.com/%s/releases/tag/%s" % (REPO, kennung)
+    paket = "https://github.com/%s/releases/download/%s/%s" % (
+        REPO, kennung, paket_name())
+    code, _ = weiterleitung(paket, jetzt)
+    return kennung, seite, (paket if code in _WEITER or code == 200 else "")
 
 def paket_name() -> str:
     """Wie das Paket für dieses System im Release heißt."""
