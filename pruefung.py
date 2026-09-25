@@ -54,6 +54,19 @@ def bild(nummer):
 toene = []
 livescan.ton_spielen = lambda datei=None: toene.append("ton")
 
+# Rückfragen beantwortet das Drehbuch, nicht ein Mensch – ein echter Dialog
+# hielte die Proben an. Ohne vorbereitete Antwort heißt es „Nein".
+antworten = []
+gefragt_dialog = []
+
+
+def _ja_nein(titel, text, parent=None):
+    gefragt_dialog.append(text)
+    return antworten.pop(0) if antworten else False
+
+
+livescan.messagebox.askyesno = _ja_nein
+
 bestand = {}          # was die Attrappe auf `infos` antwortet
 erkannt = {"items": []}
 geschickt = []
@@ -1996,6 +2009,105 @@ livescan.bauteile_auffrischen()
 pruefe(app.k_sammlung.find_all(), "nachts gezeichnet")
 livescan.farben_setzen(wurzel, dunkel=False)
 livescan.bauteile_auffrischen()
+wurzel.destroy()
+
+# ===================================== Die Liste zuerst, die Wunschliste
+abschnitt("14. Einkaufsliste als Hauptsache, Wunschliste in beide Richtungen")
+
+
+class Buchhalter(Attrappe):
+    """Merkt sich, was gebucht wurde, und antwortet auf `infos` mit dem
+    jeweils aktuellen Stand."""
+    def __init__(self):
+        self.stand = {}
+        self.weg = []
+        self.gelegt = []
+
+    def infos(self, artikel, bei_bricklink=False):
+        return {t["item_id"]: dict(self.stand.get(t["item_id"], {}))
+                for t in artikel}
+
+    def auf_liste(self, i, t, z="used", p=None):
+        self.gelegt.append((i, t["item_id"]))
+        self.stand.setdefault(t["item_id"], {})["on_lists"] = ["Stream"]
+        return "auf der Liste"
+
+    def von_wunschliste(self, t):
+        self.weg.append(t["item_id"])
+        self.stand.setdefault(t["item_id"], {})["wanted"] = False
+        return "von der Wunschliste genommen"
+
+    def auf_wunschliste(self, t):
+        self.stand.setdefault(t["item_id"], {})["wanted"] = True
+        return "auf der Wunschliste"
+
+
+wurzel, app = fenster()
+buch = Buchhalter()
+app.instanz = buch
+pruefe(app.k_liste._art == "gruen" and app.k_sammlung._art == "normal",
+       "der breite grüne Knopf legt auf die Liste, die Sammlung ist Nebensache")
+app.post.put(("listen", [{"id": 7, "name": "Stream Freitag"}]))
+takt(wurzel)
+pruefe(app.k_liste.cget("text") == "🛒 Auf »Stream Freitag«",
+       "der Knopf sagt, auf welche Liste es geht")
+
+# Auf die Liste – die Figur steht auf der Wunschliste: Rückfrage, ja.
+buch.stand["sw0036"] = {"wanted": True}
+app._kandidaten_zeigen([artikel("sw0036", 62, "Stormtrooper", wanted=True)])
+takt(wurzel)
+gefragt_dialog.clear()
+antworten[:] = [True]
+app.auf_liste()
+takt(wurzel, 400)
+pruefe(buch.gelegt == [(7, "sw0036")], "auf die gewählte Liste gelegt")
+pruefe(gefragt_dialog and "Wunschliste" in gefragt_dialog[0],
+       "und gefragt, ob sie von der Wunschliste darf")
+takt(wurzel, 400)
+pruefe(buch.weg == ["sw0036"], "auf „Ja“ ist sie von der Wunschliste")
+pruefe(app.k_merken.cget("text") == "☆", "der Stern ist wieder leer")
+pruefe("steht auf" in app.besitz.cget("text"),
+       "und die Karte zeigt nachgefragt: steht auf der Liste")
+
+# Nicht gewünscht: keine Frage.
+trennen(app)
+app._kandidaten_zeigen([artikel("sw0097", 41, "Stormtrooper, Black Head")])
+takt(wurzel)
+gefragt_dialog.clear()
+app.auf_liste()
+takt(wurzel, 400)
+pruefe(gefragt_dialog == [], "ohne Wunsch wird nicht gefragt")
+
+# Der Stern als Umschalter: ★ drücken fragt, „Nein" lässt alles stehen.
+trennen(app)
+buch.stand["sw0188"] = {"wanted": True}
+buch.weg.clear()
+app._kandidaten_zeigen([artikel("sw0188", 78, "Dotted Mouth", wanted=True)])
+takt(wurzel)
+pruefe(app.k_merken.cget("text") == "★", "gemerkt: gelber ★")
+antworten[:] = [False]
+app.merken()
+takt(wurzel, 400)
+pruefe(buch.weg == [] and app.k_merken.cget("text") == "★",
+       "auf „Nein“ bleibt sie auf der Wunschliste")
+antworten[:] = [True]
+app.merken()
+takt(wurzel, 400)
+pruefe(buch.weg == ["sw0188"] and app.k_merken.cget("text") == "☆",
+       "auf „Ja“ ist sie weg und der Stern leer")
+app.merken()
+takt(wurzel, 400)
+pruefe(app.k_merken.cget("text") == "★",
+       "und ein erneuter Tipp merkt sie wieder – ohne Frage")
+
+# Keine Liste da: der Hauptknopf führt zum Anlegen, statt ins Leere.
+app.post.put(("listen", []))
+takt(wurzel)
+angelegt = []
+app.liste_anlegen = lambda: angelegt.append(1)
+app.auf_liste()
+pruefe(angelegt == [1] and app.k_liste.cget("text") == "🛒 Auf die Liste",
+       "ohne Liste öffnet 🛒 das Anlegen")
 wurzel.destroy()
 
 # ============================================================ Bilanz

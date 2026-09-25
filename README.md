@@ -214,13 +214,13 @@ endet, nicht an einer festen Marke. Bei einer Figur aus dreißig Sets stehen
 trotzdem nicht alle da: Zeile 2 zeigt vier deiner Sets, Zeile 3 acht aus dem
 Katalog, dahinter jeweils „und N weitere".
 
-**Zustand und Einkauf** stehen darüber und gelten für „＋ Zur Sammlung"
-und 🛒 – die Wunschliste kennt beides nicht und lässt es liegen:
+**Zustand und Einkauf** stehen darüber und gelten für 🛒 und „＋ Sammlung"
+– die Wunschliste kennt beides nicht und lässt es liegen:
 
 ```
 [ Gebraucht | Neu ]   Einkauf: [ 7,00 ] €
-[      ＋ Zur Sammlung      ]  [☆]  [🛒]
-[ Flohmarkt 24.09.       ▾ ]  [↻]  [＋ Liste]
+[ Flohmarkt 24.09.            ▾ ]  [↻]  [＋ Liste]
+[ 🛒 Auf »Flohmarkt 24.09.« ]  [☆]  [＋ Sammlung]
 ```
 
 Der Preis darf leer bleiben, dann trägt die App keinen ein. Komma oder Punkt
@@ -229,10 +229,19 @@ nächste Figur stumm den Preis der vorigen. Der **Zustand bleibt dagegen
 stehen** und überdauert auch den Neustart: Auf einem Flohmarkt ist fast alles
 gebraucht.
 
-Die Knöpfe darunter sehen aus und tun, was die Trefferkarte in der App
-auch tut: **„＋ Zur Sammlung"** breit und grün, daneben **☆** für die
-Wunschliste und **🛒** für die Liste, die darunter gewählt ist. Steht die
-Figur schon auf der Wunschliste, ist der Stern gefüllt und gelb (★).
+**Die Einkaufsliste ist die Hauptsache** (seit 1.9.3): Im Stream füllt man
+vor allem Listen, in die Sammlung kommt ein Artikel erst, wenn er da ist.
+Darum steht die Wahl der Liste direkt über dem breiten grünen Knopf, und der
+Knopf sagt, wohin es geht. Gibt es noch keine Liste, öffnet er das Anlegen.
+Daneben **☆** für die Wunschliste und **„＋ Sammlung"**.
+
+**Der Stern geht in beide Richtungen.** Steht die Figur schon auf der
+Wunschliste, ist er gefüllt und gelb (★); ein Tipp darauf fragt, ob sie
+wieder herunter soll. **Legt ihr eine gewünschte Figur auf eine
+Einkaufsliste**, fragt der Scanner ebenso – gekauft heißt meist: nicht mehr
+gewünscht, aber vielleicht wollt ihr noch ein zweites Exemplar. Nach jeder
+Buchung holt er „habt ihr schon" neu, die Karte zeigt also gleich, wo die
+Figur jetzt steht.
 
 Überhaupt trägt der Scanner seit 1.9.0 die Handschrift der App: dunkle
 Kante, runde Ecken, Gelb für den Auslöser, Gebraucht/Neu und die

@@ -70,11 +70,12 @@ import uuid
 import weakref
 import webbrowser
 from tkinter import font as tkfont
+from tkinter import messagebox
 from tkinter import ttk
 
 # Steht auch im Info.plist des Bündels. setup.py liest sie von hier,
 # damit sie nicht an zwei Stellen auseinanderläuft; pruefung.py wacht darüber.
-VERSION = "1.9.2"
+VERSION = "1.9.3"
 
 # Auf welchem System laufen wir? Der Mac-Weg bleibt unangetastet; fuer
 # Windows stehen daneben eigene Zweige. Alles andere (Linux) faellt auf den
@@ -478,6 +479,23 @@ class Instanz:
     def auf_wunschliste(self, t: dict) -> str:
         d = self._anfrage("/api/wanted", _gemeinsam(t))
         return "stand schon drauf" if d.get("exists") else "auf der Wunschliste"
+
+    def von_wunschliste(self, t: dict) -> str:
+        """Den Artikel wieder von der Wunschliste nehmen.
+
+        Die Schnittstelle löscht nach Eintragsnummer; die kennt der Scanner
+        nicht, also erst nachsehen. Steht er doppelt drauf (anderer Weg,
+        andere Zeit), gehen beide – gemeint ist „nicht mehr wünschen".
+        """
+        typ = t.get("item_type") or "minifig"
+        alle = self._anfrage("/api/wanted").get("items", [])
+        weg = [w for w in alle if w.get("item_id") == t["item_id"]
+               and (w.get("item_type") or "minifig") == typ]
+        if not weg:
+            return "stand nicht auf der Wunschliste"
+        for w in weg:
+            self._anfrage(f"/api/wanted/{w['id']}", methode="DELETE")
+        return "von der Wunschliste genommen"
 
     def auf_liste(self, liste_id: int, t: dict, zustand: str = "used",
                   preis: float | None = None) -> str:
@@ -2480,28 +2498,14 @@ class LiveScanner:
         self.preisfeld.pack(side="left", padx=(4, 0))
         ttk.Label(erfassung, text="€").pack(side="left", padx=(2, 0))
 
-        # Wie die Trefferkarte in der App: eine breite Hauptsache, Merken und
-        # Liste als Zeichen daneben. Vorher drei gleich große graue Knöpfe
-        # auf zwei Zeilen verteilt.
-        reihe = ttk.Frame(r)
-        reihe.pack(fill="x", pady=(10, 0))
-        self.k_liste = Knopf(reihe, text="🛒", art="zeichen",
-                             command=self.auf_liste, state="disabled",
-                             hoehe=38, groesse=15)
-        self.k_liste.pack(side="right")
-        self.k_merken = Knopf(reihe, text="☆", art="zeichen",
-                              command=self.merken, state="disabled",
-                              hoehe=38, groesse=15)
-        self.k_merken.pack(side="right", padx=(8, 8))
-        self.k_sammlung = Knopf(reihe, text="＋ Zur Sammlung", art="gruen",
-                                command=self.zur_sammlung, state="disabled",
-                                hoehe=38, groesse=13)
-        self.k_sammlung.pack(side="left", fill="x", expand=True)
-
-        # Die Liste, auf die 🛒 legt.
+        # **Die Einkaufsliste ist die Hauptsache.** Im Stream füllt man vor
+        # allem Listen – gekauft ist, was der Verkäufer zuschlägt, in die
+        # Sammlung kommt es erst, wenn es da ist. Darum steht die Wahl der
+        # Liste direkt über dem breiten Knopf, und der Knopf sagt, wohin es
+        # geht. Die Sammlung ist die Nebensache daneben.
         listenreihe = ttk.Frame(r)
-        listenreihe.pack(fill="x", pady=(8, 0))
-        # Und wer bei jemand Neuem kauft, soll die Liste hier anlegen können
+        listenreihe.pack(fill="x", pady=(10, 0))
+        # Wer bei jemand Neuem kauft, soll die Liste hier anlegen können
         # statt mitten im Stream in die App zu wechseln.
         Knopf(listenreihe, text="＋ Liste",
               command=self.liste_anlegen).pack(side="right")
@@ -2512,6 +2516,23 @@ class LiveScanner:
         self.listenwahl = ttk.Combobox(listenreihe, state="readonly",
                                        width=20, values=[])
         self.listenwahl.pack(side="left", fill="x", expand=True)
+        self.listenwahl.bind("<<ComboboxSelected>>",
+                             lambda _e: self._listenknopf_beschriften())
+
+        reihe = ttk.Frame(r)
+        reihe.pack(fill="x", pady=(8, 0))
+        self.k_sammlung = Knopf(reihe, text="＋ Sammlung",
+                                command=self.zur_sammlung, state="disabled",
+                                hoehe=38)
+        self.k_sammlung.pack(side="right")
+        self.k_merken = Knopf(reihe, text="☆", art="zeichen",
+                              command=self.merken, state="disabled",
+                              hoehe=38, groesse=15)
+        self.k_merken.pack(side="right", padx=(8, 8))
+        self.k_liste = Knopf(reihe, text="🛒 Auf die Liste", art="gruen",
+                             command=self.auf_liste, state="disabled",
+                             hoehe=38, groesse=13)
+        self.k_liste.pack(side="left", fill="x", expand=True)
 
         ttk.Separator(r).pack(fill="x", pady=8)
         # Der Verlauf ist nicht nur Protokoll: Ein Klick holt den ganzen
@@ -3082,12 +3103,23 @@ class LiveScanner:
                     self.melden(last)
                 elif art == "verlauf":
                     self.melden(last, True)
-                elif art == "gemerkt":
-                    # Der Stern füllt sich, wie in der App – aber nur, wenn
-                    # die Karte noch dieser Figur gehört.
-                    last.setdefault("_info", {})["wanted"] = True
+                elif art in ("gemerkt", "entmerkt"):
+                    # Der Stern folgt sofort, wie in der App – aber nur, wenn
+                    # die Karte noch dieser Figur gehört. Der Rest der Karte
+                    # (Zeile „auf der Wunschliste", Farbe in der Liste) kommt
+                    # mit dem Nachfragen gleich danach.
+                    last.setdefault("_info", {})["wanted"] = art == "gemerkt"
                     if self.treffer is last:
-                        self._stern_setzen(True)
+                        self._stern_setzen(art == "gemerkt")
+                elif art == "wunsch-fragen":
+                    self._wunsch_abgeben_fragen(last)
+                elif art == "nachbuchen":
+                    # Nach jeder Buchung „habt ihr schon" neu holen – sonst
+                    # stünde die Figur noch als „nicht in der Sammlung" oder
+                    # „auf der Wunschliste" da, obwohl sie längst woanders ist.
+                    if self.kandidaten and any(
+                            t is last for t in self.kandidaten):
+                        self._bestand_auffrischen(self.kandidaten)
                 elif art == "preis-leeren":
                     # Sonst uebernaehme die naechste Figur stumm den Preis
                     # der vorigen – der Zustand darf dagegen stehen bleiben.
@@ -3154,6 +3186,7 @@ class LiveScanner:
                             namen.index(vorher) if vorher in namen else 0)
                     else:
                         self.listenwahl.set("")
+                    self._listenknopf_beschriften()
                     self.melden("{} Einkaufsliste{}".format(
                         len(namen), "" if len(namen) == 1 else "n"))
                 elif art == "listenwahl":
@@ -3162,6 +3195,7 @@ class LiveScanner:
                     namen = list(self.listenwahl.cget("values"))
                     if last in namen:
                         self.listenwahl.current(namen.index(last))
+                    self._listenknopf_beschriften()
         except queue.Empty:
             pass
         # Hier mit, und zwar aus einem Grund, der nicht auf der Hand liegt:
@@ -4267,6 +4301,11 @@ class LiveScanner:
             self.post.put(("preis-leeren", None))
             if was == "Merken":
                 self.post.put(("gemerkt", treffer))
+            elif was == "Liste" and (treffer.get("_info") or {}).get("wanted"):
+                # Gekauft heißt meist: nicht mehr gewünscht. Aber nur nach
+                # Rückfrage – vielleicht will man noch ein zweites Exemplar.
+                self.post.put(("wunsch-fragen", treffer))
+            self.post.put(("nachbuchen", treffer))
         threading.Thread(target=lauf, daemon=True).start()
 
     def in_ablage(self):
@@ -4289,13 +4328,50 @@ class LiveScanner:
                   "Sammlung")
 
     def merken(self):
+        """☆ merkt, ★ nimmt wieder weg – nach Rückfrage."""
+        if not self.treffer:
+            return
+        if (self.treffer.get("_info") or {}).get("wanted"):
+            self._wunsch_abgeben_fragen(self.treffer)
+            return
         self._tun(self.instanz.auf_wunschliste, "Merken")
+
+    def _wunsch_abgeben_fragen(self, treffer: dict):
+        """Fragen, ob der Artikel von der Wunschliste darf – und es tun."""
+        name = _kurz(treffer.get("name") or treffer["item_id"], 60)
+        if not messagebox.askyesno(
+                "Von der Wunschliste nehmen?",
+                "»{}« ({}) steht auf der Wunschliste.\n\n"
+                "Von der Wunschliste nehmen?".format(name, treffer["item_id"]),
+                parent=self.wurzel):
+            return
+
+        def lauf():
+            try:
+                ergebnis = self.instanz.von_wunschliste(treffer)
+            except Fehler as e:
+                self.post.put(("verlauf", f"Von der Wunschliste nehmen "
+                                          f"misslungen: {e}"))
+                return
+            self.post.put(("verlauf", f"{treffer['item_id']} – {ergebnis}"))
+            self.post.put(("entmerkt", treffer))
+            self.post.put(("nachbuchen", treffer))
+        threading.Thread(target=lauf, daemon=True).start()
+
+    def _listenknopf_beschriften(self):
+        """Der Hauptknopf sagt, wohin es geht."""
+        name = self.listenwahl.get()
+        self.k_liste.config(text="🛒 Auf »{}«".format(_kurz(name, 34))
+                            if name else "🛒 Auf die Liste")
 
     def auf_liste(self):
         passend = [l for l in self.listen
                    if l["name"] == self.listenwahl.get()]
         if not passend:
-            self.melden("Keine Liste gewählt.")
+            # Noch keine Liste? Dann gleich eine anlegen – der Artikel wird
+            # sonst verpasst, während man in die App wechselt.
+            self.melden("Noch keine Liste – leg eine an, dann noch einmal 🛒.")
+            self.liste_anlegen()
             return
         gut, preis = self._preis_lesen()
         if not gut:
