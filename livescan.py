@@ -74,7 +74,7 @@ from tkinter import ttk
 
 # Steht auch im Info.plist des Bündels. setup.py liest sie von hier,
 # damit sie nicht an zwei Stellen auseinanderläuft; pruefung.py wacht darüber.
-VERSION = "1.9.1"
+VERSION = "1.9.2"
 
 # Auf welchem System laufen wir? Der Mac-Weg bleibt unangetastet; fuer
 # Windows stehen daneben eigene Zweige. Alles andere (Linux) faellt auf den
@@ -4327,39 +4327,28 @@ def fassungszahlen(text: str) -> tuple:
 def neuere_fassung(jetzt: str = "") -> tuple | None:
     """Gibt es eine neuere Fassung? (Fassung, Seite, Paket) oder None.
 
-    Fragt die Release-Auskunft von GitHub. **Schweigt bei jedem Problem** –
-    kein Netz, kein Zugang, GitHub ausgelastet: Ein Werkzeug für
-    Auktions-Streams darf nicht mit Fehlern über sich selbst stören.
+    **Schweigt bei jedem Problem** – kein Netz, GitHub ausgelastet: Ein
+    Werkzeug für Auktions-Streams darf nicht mit Fehlern über sich selbst
+    stören.
+
+    **Nicht über die API.** Die erlaubt ohne Anmeldung 60 Abfragen je
+    Stunde und Internetanschluss – geteilt mit jedem anderen Gerät
+    dahinter. Am 25.09.2026 war das aufgebraucht, und der Hinweis auf 1.9.0
+    blieb aus. Ein Zugangstoken kommt nicht in Frage: Es wäre in jedem
+    ausgelieferten Programm mit drin. Die Release-Seite leitet dagegen auf
+    die neueste Fassung weiter und zählt nicht mit (`neueste_ueber_seite`).
 
     »Paket« ist die Adresse, von der der Scanner sich selbst erneuern kann;
-    fehlt sie, bleibt der Weg über die Seite. Ein Zugangstoken kommt für
-    die Abfrage nicht in Frage: Es wäre in jedem ausgelieferten Programm
-    mit drin.
+    fehlt sie, bleibt der Weg über die Seite.
     """
     jetzt = jetzt or VERSION
     try:
-        antrag = urllib.request.Request(
-            "https://api.github.com/repos/%s/releases/latest" % REPO,
-            headers={"Accept": "application/vnd.github+json",
-                     "User-Agent": "Brickfolio-Live-Scanner/%s" % jetzt})
-        with urllib.request.urlopen(antrag, timeout=15) as antwort:
-            d = json.loads(antwort.read())
-        kennung = str(d.get("tag_name") or "")
-        seite = str(d.get("html_url")
-                    or "https://github.com/%s/releases/latest" % REPO)
-        paket = paket_waehlen(d.get("assets"))
+        gefunden = neueste_ueber_seite(jetzt)
     except Exception:
-        # **Die API ist nicht der einzige Weg.** Ohne Anmeldung erlaubt sie
-        # 60 Abfragen je Stunde und Anschluss – für *alle* Geräte dahinter.
-        # Am 25.09.2026 stand der Zähler auf 0, und 1.9.0 blieb unsichtbar,
-        # weil der Scanner hier schwieg. Die Webseite zählt nicht mit.
-        try:
-            gefunden = neueste_ueber_seite(jetzt)
-        except Exception:
-            gefunden = None
-        if not gefunden:
-            return None
-        kennung, seite, paket = gefunden
+        return None
+    if not gefunden:
+        return None
+    kennung, seite, paket = gefunden
     if not kennung or fassungszahlen(kennung) <= fassungszahlen(jetzt):
         return None
     return (kennung.lstrip("vV"), seite, paket)
@@ -4417,23 +4406,6 @@ def paket_name() -> str:
     """Wie das Paket für dieses System im Release heißt."""
     return ("Brickfolio-Live-Scanner-Windows-x64.zip" if IST_WINDOWS
             else "Brickfolio-Live-Scanner-macOS-arm64.zip")
-
-
-def paket_waehlen(anhaenge) -> str:
-    """Die Adresse des Pakets für dieses System – oder "".
-
-    Steht getrennt von der Abfrage, damit sich das Aussuchen ohne Netz
-    prüfen lässt. Hängt am Release keins – etwa weil der Bau noch läuft –,
-    bleibt es leer: Dann bietet der Scanner nur die Seite an, statt eine
-    Aktualisierung zu versprechen, die er nicht halten kann.
-    """
-    gesucht = paket_name()
-    for anhang in anhaenge or []:
-        if not isinstance(anhang, dict):
-            continue
-        if str(anhang.get("name") or "") == gesucht:
-            return str(anhang.get("browser_download_url") or "")
-    return ""
 
 
 def eigener_ort(ausfuehrbar: str = "", art: object = "?") -> str:

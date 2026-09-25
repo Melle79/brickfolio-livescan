@@ -1674,76 +1674,13 @@ pruefe(livescan.fassungszahlen("kaputt") == (0, 0, 0),
 pruefe(livescan.fassungszahlen("1.9.0") < livescan.fassungszahlen("1.10.0"),
        "1.10.0 ist neuer als 1.9.0 – als Text verglichen wäre es umgekehrt")
 
+# **Die Update-Prüfung fragt nicht die API.** Die erlaubt ohne Anmeldung
+# 60 Abfragen je Stunde und Anschluss – am 25.09.2026 standen sie auf 0,
+# und der Hinweis auf 1.9.0 blieb aus. Gefragt wird die Release-Seite.
 _echt_urlopen = livescan.urllib.request.urlopen
-
-
-class _Antwort:
-    def __init__(self, inhalt):
-        self._i = inhalt.encode()
-
-    def read(self):
-        return self._i
-
-    def __enter__(self):
-        return self
-
-    def __exit__(self, *_a):
-        return False
-
-
-def _antwortet(text):
-    def f(_antrag, timeout=None):
-        return _Antwort(text)
-    return f
-
-
-livescan.urllib.request.urlopen = _antwortet(
-    '{"tag_name": "v9.9.9", "html_url": "https://beispiel.test/neu",'
-    ' "assets": [{"name": "irgendwas.txt", "browser_download_url": "x"},'
-    ' {"name": "%s", "browser_download_url": "https://beispiel.test/p.zip"}]}'
-    % livescan.paket_name())
-try:
-    _neu = livescan.neuere_fassung("1.5.2")
-    pruefe(_neu == ("9.9.9", "https://beispiel.test/neu",
-                    "https://beispiel.test/p.zip"),
-           "eine neuere Fassung kommt mit Seite und Paket")
-    pruefe(livescan.neuere_fassung("9.9.9") is None,
-           "die eigene Fassung ist kein Grund für einen Hinweis")
-    pruefe(livescan.neuere_fassung("10.0.0") is None,
-           "und eine ältere draußen erst recht nicht")
-finally:
-    livescan.urllib.request.urlopen = _echt_urlopen
-
-livescan.urllib.request.urlopen = _antwortet(
-    '{"tag_name": "v9.9.9", "html_url": "https://beispiel.test/neu"}')
-try:
-    pruefe(livescan.neuere_fassung("1.5.2") == (
-        "9.9.9", "https://beispiel.test/neu", ""),
-        "hängt kein Paket dran, bleibt die Stelle leer statt zu scheitern")
-finally:
-    livescan.urllib.request.urlopen = _echt_urlopen
-
-
-def _wirft(_antrag, timeout=None):
-    raise OSError("kein Netz")
-
-
-livescan.urllib.request.urlopen = _wirft
-_echt_weiter_netz = livescan.weiterleitung
-# Ohne Netz geht auch der zweite Weg über die Webseite nicht.
-livescan.weiterleitung = lambda a, j="": _wirft(a)
-try:
-    pruefe(livescan.neuere_fassung("1.0.0") is None,
-           "ohne Netz schweigt sie, statt zu stören")
-finally:
-    livescan.urllib.request.urlopen = _echt_urlopen
-    livescan.weiterleitung = _echt_weiter_netz
-
-# **Ist die API erschöpft, geht es über die Webseite.** 60 Abfragen je
-# Stunde und Anschluss – am 25.09.2026 standen sie auf 0, und der Hinweis
-# auf 1.9.0 blieb aus.
 _echt_weiter = livescan.weiterleitung
 _gefragt = []
+_mit_paket = True
 
 
 def _seite(adresse, jetzt=""):
@@ -1756,52 +1693,49 @@ def _seite(adresse, jetzt=""):
     return 404, ""
 
 
-livescan.urllib.request.urlopen = _wirft
+def _api_verboten(antrag, timeout=None):
+    raise AssertionError("die API wurde gefragt")
+
+
+livescan.urllib.request.urlopen = _api_verboten
 livescan.weiterleitung = _seite
 try:
-    _mit_paket = True
     _neu = livescan.neuere_fassung("1.9.0")
     pruefe(_neu is not None and _neu[0] == "9.9.9",
-           "ohne API findet die Webseite die neue Fassung")
+           "die Release-Seite nennt die neue Fassung")
     pruefe(_neu[1].endswith("/releases/tag/v9.9.9"), "samt Seite")
     pruefe(_neu[2].endswith("/releases/download/v9.9.9/"
                             + livescan.paket_name()),
            "und dem Paket für dieses System")
     pruefe(not any("api.github.com" in a for a in _gefragt),
-           "die Webseite fragt nicht über die API")
+           "die API wird nicht gefragt")
     _mit_paket = False
     pruefe(livescan.neuere_fassung("1.9.0")[2] == "",
-           "hängt das Paket noch nicht dran, bleibt es leer")
+           "hängt das Paket noch nicht dran, bleibt es leer statt zu scheitern")
     pruefe(livescan.neuere_fassung("9.9.9") is None,
-           "und die eigene Fassung ist auch hier kein Grund")
+           "die eigene Fassung ist kein Grund für einen Hinweis")
+    pruefe(livescan.neuere_fassung("10.0.0") is None,
+           "und eine ältere draußen erst recht nicht")
     livescan.weiterleitung = lambda a, j="": (200, "")
     pruefe(livescan.neuere_fassung("1.0.0") is None,
-           "ohne Weiterleitung schweigt sie weiter")
+           "ohne Weiterleitung schweigt sie")
+
+    def _kein_netz(a, j=""):
+        raise OSError("kein Netz")
+    livescan.weiterleitung = _kein_netz
+    pruefe(livescan.neuere_fassung("1.0.0") is None,
+           "ohne Netz schweigt sie, statt zu stören")
 finally:
     livescan.urllib.request.urlopen = _echt_urlopen
     livescan.weiterleitung = _echt_weiter
+pruefe("api.github.com" not in pathlib.Path(livescan.__file__).read_text(),
+       "im Scanner steht keine API-Adresse mehr")
 
 _roh_upd = pathlib.Path(livescan.__file__).read_text()
 pruefe("daemon=True" in _roh_upd.split("_update_pruefen")[1][:200],
        "die Abfrage läuft im Hintergrund – der Start wartet nicht darauf")
 pruefe("updates_pruefen" in _roh_upd,
        "und sie lässt sich in den Einstellungen abschalten")
-
-# ------------------------------------------------- Das Paket aussuchen
-_mein = livescan.paket_name()
-pruefe(livescan.paket_waehlen(
-    [{"name": _mein, "browser_download_url": "https://a.test/gut.zip"}])
-    == "https://a.test/gut.zip",
-    "aus den Anhängen wird das Paket für dieses System gegriffen")
-pruefe(livescan.paket_waehlen(
-    [{"name": "Brickfolio-Live-Scanner-"
-      + ("macOS-arm64" if livescan.IST_WINDOWS else "Windows-x64")
-      + ".zip", "browser_download_url": "https://a.test/falsch.zip"}]) == "",
-    "das Paket des anderen Systems wird nicht genommen")
-pruefe(livescan.paket_waehlen([]) == "" and livescan.paket_waehlen(None) == "",
-       "ohne Anhänge bleibt es leer")
-pruefe(livescan.paket_waehlen(["kein Wörterbuch", 7]) == "",
-       "und Unerwartetes in der Liste stürzt nicht ab")
 
 # ------------------------------------------------- Wo wir selbst liegen
 pruefe(livescan.eigener_ort("/Programme/Scanner.app/Contents/MacOS/Scanner",
