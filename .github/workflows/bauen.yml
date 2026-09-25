@@ -139,6 +139,20 @@ jobs:
           PYTHONIOENCODING: "utf-8"
         run: python pruefung.py
 
+      - name: Bildschirmfoto
+        # Die Knöpfe zeichnet der Scanner selbst – wie sie unter Windows
+        # aussehen (Schrift, Ecken, Skalierung), sieht man nur hier. Das Bild
+        # liegt danach als Artefakt am Lauf.
+        env:
+          PYTHONUTF8: "1"
+          PYTHONIOENCODING: "utf-8"
+        run: python ansicht.py ansicht-windows.png
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Ansicht-Windows
+          path: ansicht-windows.png
+
       - name: cloudflared holen
         # Kommt mit ins Paket, damit niemand etwas nachinstallieren muss,
         # um sich hinter Cloudflare Access anzumelden. Apache-2.0, die

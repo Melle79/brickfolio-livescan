@@ -67,12 +67,14 @@ import urllib.error
 import urllib.parse
 import urllib.request
 import uuid
+import weakref
 import webbrowser
+from tkinter import font as tkfont
 from tkinter import ttk
 
 # Steht auch im Info.plist des Bündels. setup.py liest sie von hier,
 # damit sie nicht an zwei Stellen auseinanderläuft; pruefung.py wacht darüber.
-VERSION = "1.8.0"
+VERSION = "1.9.0"
 
 # Auf welchem System laufen wir? Der Mac-Weg bleibt unangetastet; fuer
 # Windows stehen daneben eigene Zweige. Alles andere (Linux) faellt auf den
@@ -1343,10 +1345,297 @@ def farben_auffrischen(wurzel) -> bool:
                 if vorher[rolle] != FARBEN[rolle]}
     if umschlag:
         _umfaerben(wurzel, umschlag)
+    bauteile_auffrischen()
     return True
 
 
 _FARBEN_HELL = dict(FARBEN)
+
+
+# ------------------------------------------------ Bauteile der Handschrift
+#
+# **Warum eigene Knöpfe.** Die App hat eine erkennbare Handschrift: dunkle
+# Kante, runde Ecken, Gelb für den Auslöser, Grün für „Zur Sammlung", und
+# was seltener gebraucht wird, steht als Zeichen daneben. Die Systemknöpfe
+# von ttk können davon nichts – unter macOS nehmen sie weder Farbe noch
+# Kante an, alle sehen gleich wichtig aus. Also zeichnen sich die beiden
+# Bauteile hier selbst auf eine Leinwand. Das geht unter macOS und Windows
+# gleich und braucht keine Fremdbibliothek.
+#
+# Nach außen benehmen sie sich wie die Knöpfe vorher: `config(state=...)`,
+# `cget("state")`, `pack`. Dadurch bleibt der übrige Code, wie er war.
+
+_BAUTEILE = weakref.WeakSet()
+
+# Je Art: (Fläche, Schrift, Fläche beim Überfahren). Kante und Schatten
+# gelten für alle gleich.
+_KNOPF_HELL = {
+    "normal":  ("#FFFFFF", "#1D1D1B", "#F2F3F5"),
+    "gelb":    ("#FFCF00", "#1D1D1B", "#F2C300"),
+    "gruen":   ("#00963E", "#FFFFFF", "#008837"),
+    "an":      ("#FFCF00", "#1D1D1B", "#F2C300"),   # gesetztes Zeichen ★
+    "kante": "#1D1D1B", "schatten": "#B9BCC1",
+    "aus": ("#F1F2F4", "#9A9DA2", "#C4C7CC"),        # Fläche, Schrift, Kante
+    "spur": "#E1E3E7", "spur_schrift": "#6B6E73",
+}
+# Nachts keine weiße Fläche – sie leuchtete im dunklen Fenster wie ein
+# Loch. Gelb und Grün bleiben: Sie tragen die Bedeutung, und auf Dunkel
+# stehen sie sogar besser.
+_KNOPF_DUNKEL = {
+    "normal":  ("#3A3A3C", "#F2F2F2", "#48484A"),
+    "gelb":    ("#FFCF00", "#1D1D1B", "#F2C300"),
+    "gruen":   ("#00963E", "#FFFFFF", "#00A444"),
+    "an":      ("#FFCF00", "#1D1D1B", "#F2C300"),
+    "kante": "#8E8E93", "schatten": "#141416",
+    "aus": ("#2C2C2E", "#6E6E73", "#48484A"),
+    "spur": "#3A3A3C", "spur_schrift": "#A8A8A8",
+}
+
+
+def _knopffarben() -> dict:
+    return _KNOPF_DUNKEL if _MODUS["dunkel"] else _KNOPF_HELL
+
+
+def _grund(widget) -> str:
+    """Die Farbe hinter dem Bauteil – damit die runden Ecken nicht eckig
+    aussehen. Unter macOS ist das ein Systemname, der Tag und Nacht von
+    selbst mitgeht."""
+    try:
+        return ttk.Style().lookup("TFrame", "background") \
+            or widget.winfo_toplevel().cget("background")
+    except Exception:
+        return widget.winfo_toplevel().cget("background")
+
+
+def _rund(leinwand, x1, y1, x2, y2, r, **art):
+    """Ein Rechteck mit runden Ecken – als geglättetes Vieleck, das Tk von
+    Haus aus kann."""
+    r = max(1, min(r, (x2 - x1) / 2, (y2 - y1) / 2))
+    punkte = [x1 + r, y1, x2 - r, y1, x2, y1, x2, y1 + r,
+              x2, y2 - r, x2, y2, x2 - r, y2, x1 + r, y2,
+              x1, y2, x1, y2 - r, x1, y1 + r, x1, y1]
+    return leinwand.create_polygon(punkte, smooth=True, **art)
+
+
+def _punkt(widget) -> float:
+    """Bildpunkte je typografischem Punkt.
+
+    **Unter Windows wächst die Schrift mit der Bildschirmskalierung** –
+    `main()` setzt `tk scaling` passend. Maße in festen Bildpunkten wüchsen
+    nicht mit: Auf einem 150-%-Schirm stünde große Schrift in einem zu
+    kleinen Knopf. Darum wachsen die Maße der Bauteile mit.
+
+    Bezugsgröße sind 96 dpi, also 4/3 Bildpunkte je Punkt: So rechnet Tk
+    auf dem Mac, und so steht Windows bei 100 %. Beide ergeben 1, bei 150 %
+    unter Windows kommt 1,5 heraus. (Nicht einfach Punkte nehmen: Dann
+    wären die Knöpfe auch auf dem Mac um ein Drittel gewachsen.)
+    """
+    try:
+        return max(1.0, float(widget.winfo_fpixels("1p")) * 72 / 96)
+    except Exception:
+        return 1.0
+
+
+def _fett(groesse: int = 13):
+    schrift = tkfont.nametofont("TkDefaultFont").copy()
+    schrift.configure(weight="bold", size=groesse)
+    return schrift
+
+
+class Knopf(tk.Canvas):
+    """Ein Knopf in der Handschrift der App.
+
+    `art`: "normal" (weiß), "gelb" (Auslöser), "gruen" (Zur Sammlung) oder
+    "zeichen" (quadratisch, nur ein Zeichen wie ☆ – gesetzt mit `an=True`
+    wird er gelb, genau wie der Stern in der App).
+    """
+
+    def __init__(self, master, text="", command=None, art="normal",
+                 state="normal", hoehe=32, breite=None, groesse=12):
+        super().__init__(master, highlightthickness=0, bd=0,
+                         background=_grund(master), cursor=ZEIGEHAND)
+        self._text = text
+        self._befehl = command
+        self._art = art
+        self._zustand = state
+        self._an = False
+        self._ueber = False
+        self._gedrueckt = False
+        self._schrift = _fett(groesse)
+        self._k = _punkt(self)
+        self._hoehe = round(hoehe * self._k)
+        self._feste_breite = round(breite * self._k) if breite else None
+        super().configure(width=self._breite(),
+                          height=self._hoehe + round(2 * self._k))
+        self.bind("<Configure>", lambda _e: self._zeichnen())
+        self.bind("<Enter>", lambda _e: self._setzen(ueber=True))
+        self.bind("<Leave>", lambda _e: self._setzen(ueber=False,
+                                                     gedrueckt=False))
+        self.bind("<ButtonPress-1>", lambda _e: self._setzen(gedrueckt=True))
+        self.bind("<ButtonRelease-1>", self._losgelassen)
+        _BAUTEILE.add(self)
+        self._zeichnen()
+
+    def _breite(self) -> int:
+        if self._feste_breite:
+            return self._feste_breite
+        if self._art == "zeichen":
+            return self._hoehe + round(6 * self._k)
+        return self._schrift.measure(self._text) + round(30 * self._k)
+
+    # ----- dieselbe Schnittstelle wie ttk.Button
+    def configure(self, cnf=None, **kw):
+        if cnf:
+            kw.update(cnf)
+        neu = False
+        for schluessel, feld in (("text", "_text"), ("command", "_befehl"),
+                                 ("state", "_zustand"), ("an", "_an")):
+            if schluessel in kw:
+                setattr(self, feld, kw.pop(schluessel))
+                neu = True
+        if kw:
+            super().configure(**kw)
+        if "text" in (cnf or {}) or neu:
+            # Ein längerer Text braucht mehr Platz – sonst würde er
+            # abgeschnitten („Der Browser ist offen – bitte anmelden …").
+            super().configure(width=self._breite())
+        if neu:
+            super().configure(cursor=ZEIGEHAND if self._zustand != "disabled"
+                              else "")
+            self._zeichnen()
+
+    config = configure
+
+    def cget(self, schluessel):
+        if schluessel == "state":
+            return self._zustand
+        if schluessel == "text":
+            return self._text
+        return super().cget(schluessel)
+
+    def invoke(self):
+        if self._zustand != "disabled" and self._befehl:
+            return self._befehl()
+
+    # ----- Verhalten
+    def _setzen(self, ueber=None, gedrueckt=None):
+        if ueber is not None:
+            self._ueber = ueber
+        if gedrueckt is not None:
+            self._gedrueckt = gedrueckt
+        self._zeichnen()
+
+    def _losgelassen(self, ereignis):
+        drin = 0 <= ereignis.x < self.winfo_width() and \
+            0 <= ereignis.y < self.winfo_height()
+        war = self._gedrueckt
+        self._setzen(gedrueckt=False)
+        if drin and war:
+            self.invoke()
+
+    def _zeichnen(self):
+        self.delete("all")
+        f = _knopffarben()
+        super().configure(background=_grund(self.master))
+        b = max(self.winfo_width(), int(super().cget("width")))
+        h = max(self.winfo_height(), int(super().cget("height")))
+        aus = self._zustand == "disabled"
+        k = self._k
+        tief = round(k) if (self._gedrueckt and not aus) else 0
+        rund, kante_breit, schatten = 10 * k, max(2, round(2 * k)), 2 * k
+        if aus:
+            flaeche, schrift, kante = f["aus"]
+        else:
+            art = "an" if self._an else \
+                ("normal" if self._art == "zeichen" else self._art)
+            flaeche, schrift, flaeche_ueber = f[art]
+            if self._ueber:
+                flaeche = flaeche_ueber
+            kante = f["kante"]
+            if not tief:
+                # Der Schatten: dieselbe Form, zwei Punkt tiefer – wie der
+                # „--shadow" der App.
+                _rund(self, 1, 1 + schatten, b - 1, h - 1, rund,
+                      fill=f["schatten"], outline="")
+        _rund(self, 1, 1 + tief, b - 1, h - 1 - schatten + tief, rund,
+              fill=flaeche, outline=kante, width=kante_breit)
+        self.create_text(b / 2, (h - schatten) / 2 + tief, text=self._text,
+                         fill=schrift, font=self._schrift)
+
+
+class Pille(tk.Canvas):
+    """Eine Auswahl aus wenigen Werten – wie „Gebraucht / Neu" in der App.
+
+    Hängt an einer `tk.StringVar`; wer die Variable setzt, sieht es hier,
+    und ein Klick setzt die Variable. `get`/`set` gibt es trotzdem, damit
+    sie sich wie das Auswahlfeld vorher bedienen lässt.
+    """
+
+    def __init__(self, master, werte, variable, command=None, groesse=12,
+                 hoehe=30):
+        super().__init__(master, highlightthickness=0, bd=0,
+                         background=_grund(master), cursor=ZEIGEHAND)
+        self._werte = list(werte)             # [(wert, beschriftung), …]
+        self._var = variable
+        self._befehl = command
+        self._schrift = _fett(groesse)
+        self._k = _punkt(self)
+        self._rand = round(3 * self._k)
+        breiten = [self._schrift.measure(t) + round(22 * self._k)
+                   for _w, t in self._werte]
+        self._breiten = breiten
+        super().configure(width=sum(breiten) + 2 * self._rand,
+                          height=round(hoehe * self._k))
+        self.bind("<Configure>", lambda _e: self._zeichnen())
+        self.bind("<ButtonRelease-1>", self._geklickt)
+        self._var.trace_add("write", lambda *_e: self._zeichnen())
+        _BAUTEILE.add(self)
+        self._zeichnen()
+
+    def get(self):
+        return self._var.get()
+
+    def set(self, wert):
+        self._var.set(wert)
+
+    def _geklickt(self, ereignis):
+        x = self._rand
+        for (wert, _t), breite in zip(self._werte, self._breiten):
+            if x <= ereignis.x < x + breite:
+                if self._var.get() != wert:
+                    self._var.set(wert)
+                    if self._befehl:
+                        self._befehl()
+                return
+            x += breite
+
+    def _zeichnen(self):
+        self.delete("all")
+        f = _knopffarben()
+        super().configure(background=_grund(self.master))
+        h = int(super().cget("height"))
+        r = self._rand
+        b = sum(self._breiten) + 2 * r
+        _rund(self, 0, 0, b, h, h / 2, fill=f["spur"], outline="")
+        x = r
+        for (wert, text), breite in zip(self._werte, self._breiten):
+            gewaehlt = self._var.get() == wert
+            if gewaehlt:
+                _rund(self, x, r, x + breite, h - r, (h - 2 * r) / 2,
+                      fill="#FFCF00", outline="")
+            self.create_text(x + breite / 2, h / 2, text=text,
+                             font=self._schrift,
+                             fill="#1D1D1B" if gewaehlt else f["spur_schrift"])
+            x += breite
+
+
+def bauteile_auffrischen() -> None:
+    """Nach einem Wechsel zwischen Tag und Nacht alle neu zeichnen."""
+    for teil in list(_BAUTEILE):
+        try:
+            teil._zeichnen()
+        except tk.TclError:
+            pass
 
 
 DPI_WEG = "noch nicht gesetzt"
@@ -1976,17 +2265,20 @@ class LiveScanner:
         self._breite_labels = []
         r.bind("<Configure>", self._umbruch_anpassen)
 
-        self.ausloeser = ttk.Button(r, text="▣  Rahmen ziehen und senden",
-                                    command=self.rahmen_senden)
-        self.ausloeser.pack(fill="x", ipady=6)
+        # Der Auslöser ist die Hauptsache des Werkzeugs – gelb und breit,
+        # wie „Scannen" in der App.
+        self.ausloeser = Knopf(r, text="▣  Rahmen ziehen und senden",
+                               command=self.rahmen_senden, art="gelb",
+                               hoehe=40, groesse=13)
+        self.ausloeser.pack(fill="x")
 
         zweite = ttk.Frame(r)
-        zweite.pack(fill="x", pady=(6, 0))
-        ttk.Button(zweite, text="🎯 Bereich merken",
-                   command=self.bereich_merken).pack(side="left")
-        self.k_bereich = ttk.Button(zweite, text="📷 Aus Bereich",
-                                    command=self.bereich_senden,
-                                    state="normal" if self.bereich else "disabled")
+        zweite.pack(fill="x", pady=(8, 0))
+        Knopf(zweite, text="🎯 Bereich merken",
+              command=self.bereich_merken).pack(side="left")
+        self.k_bereich = Knopf(zweite, text="📷 Aus Bereich",
+                               command=self.bereich_senden,
+                               state="normal" if self.bereich else "disabled")
         self.k_bereich.pack(side="left", padx=(6, 0))
 
         # Von selbst auslösen, wenn im gemerkten Bereich eine neue Figur
@@ -2000,16 +2292,20 @@ class LiveScanner:
         self.automatik = tk.BooleanVar(value=False)
         self.k_automatik = ttk.Checkbutton(
             autoreihe, variable=self.automatik, command=self._automatik_schalten,
-            text="⏱ Von selbst, wenn sich im Bereich etwas tut",
+            text="⏱ Von selbst auslösen",
             state="normal" if self.bereich else "disabled")
         self.k_automatik.pack(side="left")
-        ttk.Label(autoreihe, text="Empfindlichkeit:").pack(side="left",
-                                                           padx=(10, 4))
-        self.empfindlich = ttk.Combobox(autoreihe, state="readonly", width=8,
-                                        values=list(EMPFINDLICHKEIT))
-        self.empfindlich.set(self.daten.get("empfindlichkeit", "mittel"))
-        self.empfindlich.pack(side="left")
-        self.empfindlich.bind("<<ComboboxSelected>>", self._empfindlich_merken)
+        # Als Pille sieht man alle drei Stufen, statt sie hinter einem
+        # Auswahlfeld zu suchen. Sie steht in dieser Zeile, weil sie nur für
+        # das Auslösen von selbst gilt.
+        self.empfindlich_var = tk.StringVar(
+            value=self.daten.get("empfindlichkeit", "mittel"))
+        self.empfindlich = Pille(autoreihe, [(w, w) for w in EMPFINDLICHKEIT],
+                                 self.empfindlich_var, groesse=11, hoehe=26,
+                                 command=self._empfindlich_merken)
+        self.empfindlich.pack(side="right")
+        ttk.Label(autoreihe, text="Empfindlichkeit",
+                  foreground=FARBEN["leise"]).pack(side="right", padx=(0, 6))
         # Eigene Zeile, nicht die allgemeine Statuszeile: Der Wächter meldet
         # sich jede Sekunde, und er soll dabei nicht überschreiben, was gerade
         # zum Treffer dasteht.
@@ -2019,10 +2315,10 @@ class LiveScanner:
 
         # Der andere Weg: nicht hier weitermachen, sondern das Bild der App
         # geben und dort den gewohnten Ablauf nehmen.
-        self.k_ablage = ttk.Button(r, text="📋 Bild in die Zwischenablage "
-                                           "(dann ⌘V in der App)",
-                                   command=self.in_ablage, state="disabled")
-        self.k_ablage.pack(fill="x", pady=(6, 0))
+        self.k_ablage = Knopf(r, text="📋 Bild in die Zwischenablage "
+                                      "(dann ⌘V in der App)",
+                              command=self.in_ablage, state="disabled")
+        self.k_ablage.pack(fill="x", pady=(8, 0))
 
         self.stand = ttk.Label(r, text="", foreground=FARBEN["leise"])
         self.stand.pack(fill="x", pady=(8, 4))
@@ -2098,7 +2394,7 @@ class LiveScanner:
         self.ton = tk.BooleanVar(value=bool(self.daten.get("ton", True)))
         ttk.Checkbutton(
             haken, variable=self.ton, command=self._ton_merken,
-            text="🔔 Ton bei Wunsch").pack(side="left", padx=(14, 0))
+            text="🔔 Ton bei Wunsch").pack(side="left", padx=(10, 0))
         # Die Erkennung sucht **ein** Objekt im Bild und nimmt das
         # deutlichste. Steht die Figur auf einem Ständer, ist das der Ständer.
         # Wer einen Figuren-Stream sieht, kann sich das ersparen.
@@ -2106,16 +2402,16 @@ class LiveScanner:
             value=bool(self.daten.get("nur_figuren", False)))
         ttk.Checkbutton(
             haken, variable=self.nur_figuren, command=self._figuren_merken,
-            text="🧍 Nur Figuren").pack(side="left", padx=(14, 0))
+            text="🧍 Nur Figuren").pack(side="left", padx=(10, 0))
         # Das Fenster liegt über allem, damit man den Stream weiter sieht.
         # Der Preis: Fenster **anderer** Programme gehen dahinter auf, und
         # man sucht sie. Wer gerade nicht scannt, nimmt den Haken weg.
         # Voreinstellung bleibt „an" – so war es immer.
+        # Der Haken selbst steht unten neben „Zugang …": Er gilt dem Fenster,
+        # nicht dem Scan – und vier Haken passten nicht in die Mindestbreite,
+        # „Immer vorn" war rechts abgeschnitten.
         self.immer_vorn = tk.BooleanVar(
             value=bool(self.daten.get("immer_vorn", True)))
-        ttk.Checkbutton(
-            haken, variable=self.immer_vorn, command=self._vorn_merken,
-            text="📌 Immer vorn").pack(side="left", padx=(14, 0))
 
         ttk.Separator(r).pack(fill="x", pady=4)
 
@@ -2142,8 +2438,8 @@ class LiveScanner:
         self.nummerfeld = ttk.Entry(self.nummerreihe, width=11)
         self.nummerfeld.pack(side="left", padx=(6, 0))
         self.nummerfeld.bind("<Return>", lambda _: self.nummer_suchen())
-        ttk.Button(self.nummerreihe, text="Suchen",
-                   command=self.nummer_suchen).pack(side="left", padx=(6, 0))
+        Knopf(self.nummerreihe, text="Suchen", hoehe=28,
+              command=self.nummer_suchen).pack(side="left", padx=(6, 0))
         # Kurz halten: Die Reihe muss auch in die Mindestbreite des Fensters
         # passen, sonst schiebt sie den „Suchen"-Knopf hinaus.
         ttk.Label(self.nummerreihe, text="z. B. sw0402, 75192, 3001",
@@ -2173,12 +2469,9 @@ class LiveScanner:
         # „Liste"; die Wunschliste kennt beides nicht und lässt es liegen.
         erfassung = ttk.Frame(r)
         erfassung.pack(fill="x", pady=(10, 0))
-        ttk.Label(erfassung, text="Zustand:").pack(side="left")
         self.zustand = tk.StringVar(value=self.daten.get("zustand", "used"))
-        for wert, beschriftung in (("used", "Gebraucht"), ("new", "Neu")):
-            ttk.Radiobutton(erfassung, text=beschriftung, value=wert,
-                            variable=self.zustand).pack(side="left",
-                                                        padx=(6, 0))
+        Pille(erfassung, (("used", "Gebraucht"), ("new", "Neu")),
+              self.zustand, hoehe=28).pack(side="left")
         # An der Variablen, nicht am Knopf: So wird auch gemerkt, was von
         # anderer Stelle gesetzt wird, und es gibt nur einen Weg.
         self.zustand.trace_add("write", self._zustand_merken)
@@ -2187,32 +2480,38 @@ class LiveScanner:
         self.preisfeld.pack(side="left", padx=(4, 0))
         ttk.Label(erfassung, text="€").pack(side="left", padx=(2, 0))
 
+        # Wie die Trefferkarte in der App: eine breite Hauptsache, Merken und
+        # Liste als Zeichen daneben. Vorher drei gleich große graue Knöpfe
+        # auf zwei Zeilen verteilt.
         reihe = ttk.Frame(r)
         reihe.pack(fill="x", pady=(10, 0))
-        self.k_sammlung = ttk.Button(reihe, text="＋ Sammlung",
-                                     command=self.zur_sammlung,
-                                     state="disabled")
-        self.k_sammlung.pack(side="left")
-        self.k_merken = ttk.Button(reihe, text="☆ Merken",
-                                   command=self.merken, state="disabled")
-        self.k_merken.pack(side="left", padx=(6, 0))
+        self.k_liste = Knopf(reihe, text="🛒", art="zeichen",
+                             command=self.auf_liste, state="disabled",
+                             hoehe=38, groesse=15)
+        self.k_liste.pack(side="right")
+        self.k_merken = Knopf(reihe, text="☆", art="zeichen",
+                              command=self.merken, state="disabled",
+                              hoehe=38, groesse=15)
+        self.k_merken.pack(side="right", padx=(8, 8))
+        self.k_sammlung = Knopf(reihe, text="＋ Zur Sammlung", art="gruen",
+                                command=self.zur_sammlung, state="disabled",
+                                hoehe=38, groesse=13)
+        self.k_sammlung.pack(side="left", fill="x", expand=True)
 
+        # Die Liste, auf die 🛒 legt.
         listenreihe = ttk.Frame(r)
-        listenreihe.pack(fill="x", pady=(6, 0))
-        self.listenwahl = ttk.Combobox(listenreihe, state="readonly",
-                                       width=20, values=[])
-        self.listenwahl.pack(side="left")
-        self.k_liste = ttk.Button(listenreihe, text="🛒 drauf",
-                                  command=self.auf_liste, state="disabled")
-        self.k_liste.pack(side="left", padx=(6, 0))
-        # Wer in der App eine neue Einkaufsliste anlegt, soll sie hier
-        # bekommen, ohne das Werkzeug neu zu starten.
-        ttk.Button(listenreihe, text="↻", width=3,
-                   command=self.listen_laden).pack(side="left", padx=(6, 0))
+        listenreihe.pack(fill="x", pady=(8, 0))
         # Und wer bei jemand Neuem kauft, soll die Liste hier anlegen können
         # statt mitten im Stream in die App zu wechseln.
-        ttk.Button(listenreihe, text="＋ Liste", width=8,
-                   command=self.liste_anlegen).pack(side="left", padx=(6, 0))
+        Knopf(listenreihe, text="＋ Liste",
+              command=self.liste_anlegen).pack(side="right")
+        # Wer in der App eine neue Einkaufsliste anlegt, soll sie hier
+        # bekommen, ohne das Werkzeug neu zu starten.
+        Knopf(listenreihe, text="↻", art="zeichen",
+              command=self.listen_laden).pack(side="right", padx=(6, 6))
+        self.listenwahl = ttk.Combobox(listenreihe, state="readonly",
+                                       width=20, values=[])
+        self.listenwahl.pack(side="left", fill="x", expand=True)
 
         ttk.Separator(r).pack(fill="x", pady=8)
         # Der Verlauf ist nicht nur Protokoll: Ein Klick holt den ganzen
@@ -2229,8 +2528,11 @@ class LiveScanner:
 
         fuss = ttk.Frame(r)
         fuss.pack(fill="x", pady=(8, 0))
-        ttk.Button(fuss, text="Zugang …", command=self.zugang_zeigen
-                   ).pack(side="left")
+        Knopf(fuss, text="Zugang …", command=self.zugang_zeigen
+              ).pack(side="left")
+        ttk.Checkbutton(
+            fuss, variable=self.immer_vorn, command=self._vorn_merken,
+            text="📌 Immer vorn").pack(side="left", padx=(12, 0))
         ttk.Label(fuss, text="⏎ löst auch aus", foreground=FARBEN["matt"]
                   ).pack(side="right")
         # **Steht nur da, wenn es etwas zu sagen gibt.** Ohne neuere
@@ -2342,8 +2644,8 @@ class LiveScanner:
             f.after(120, nachsehen)
 
         if ziel and paket and os.access(os.path.dirname(ziel), os.W_OK):
-            ttk.Button(knoepfe, text="Jetzt aktualisieren",
-                       command=loslegen).pack(side="left")
+            Knopf(knoepfe, text="Jetzt aktualisieren", art="gelb",
+                  command=loslegen).pack(side="left")
         else:
             if not ziel:
                 warum = ("Aus dem Quelltext gestartet – hier hilft git, "
@@ -2354,10 +2656,10 @@ class LiveScanner:
                 warum = "Hier darf ich nichts ersetzen – fehlende Rechte."
             ttk.Label(r, text=warum, foreground=FARBEN["leise"],
                       wraplength=330).pack(anchor="w", pady=(0, 8))
-        ttk.Button(knoepfe, text="Seite öffnen",
-                   command=lambda: webbrowser.open(seite)).pack(
-                       side="left", padx=(8, 0))
-        ttk.Button(knoepfe, text="Später", command=f.destroy).pack(
+        Knopf(knoepfe, text="Seite öffnen",
+              command=lambda: webbrowser.open(seite)).pack(
+                  side="left", padx=(8, 0))
+        Knopf(knoepfe, text="Später", command=f.destroy).pack(
             side="right")
 
     # --------------------------------------------------------- Meldungen
@@ -2780,6 +3082,12 @@ class LiveScanner:
                     self.melden(last)
                 elif art == "verlauf":
                     self.melden(last, True)
+                elif art == "gemerkt":
+                    # Der Stern füllt sich, wie in der App – aber nur, wenn
+                    # die Karte noch dieser Figur gehört.
+                    last.setdefault("_info", {})["wanted"] = True
+                    if self.treffer is last:
+                        self._stern_setzen(True)
                 elif art == "preis-leeren":
                     # Sonst uebernaehme die naechste Figur stumm den Preis
                     # der vorigen – der Zustand darf dagegen stehen bleiben.
@@ -2926,7 +3234,7 @@ class LiveScanner:
                   text="Oder ohne Dienst-Token: einmal im Browser anmelden, "
                        "wie gewohnt mit E-Mail und Code.").pack(
             anchor="w", pady=(4, 4))
-        k_cf = ttk.Button(r, text="🌐 Über Cloudflare anmelden …")
+        k_cf = Knopf(r, text="🌐 Über Cloudflare anmelden …")
         k_cf.pack(anchor="w", pady=(0, 8))
 
         hinweis = ttk.Label(r, text="", foreground=FARBEN["warnung"],
@@ -2976,7 +3284,8 @@ class LiveScanner:
             self.melden("Angemeldet.")
             f.destroy()
 
-        ttk.Button(r, text="Anmelden", command=anmelden).pack(pady=(8, 0))
+        Knopf(r, text="Anmelden", art="gelb", command=anmelden).pack(
+            pady=(8, 0))
         e_passwort.bind("<Return>", lambda _: anmelden())
         e_passwort.focus_set()
 
@@ -3113,7 +3422,8 @@ class LiveScanner:
             threading.Thread(target=lauf, daemon=True).start()
             f.destroy()
 
-        ttk.Button(r, text="Anlegen", command=anlegen).pack(pady=(8, 0))
+        Knopf(r, text="Anlegen", art="gelb", command=anlegen).pack(
+            pady=(8, 0))
         eingabe.bind("<Return>", lambda _: anlegen())
         eingabe.focus_set()
 
@@ -3835,6 +4145,11 @@ class LiveScanner:
         self._blinken_beenden(self.rahmen_aus)
         for k in (self.k_sammlung, self.k_merken, self.k_liste):
             k.config(state="disabled")
+        self._stern_setzen(False)
+
+    def _stern_setzen(self, gemerkt: bool):
+        """☆ oder ★ – steht die Figur schon auf der Wunschliste?"""
+        self.k_merken.config(text="★" if gemerkt else "☆", an=gemerkt)
 
     def _treffer_zeigen(self, treffer: dict, still: bool = False,
                         blinken: bool = True):
@@ -3873,6 +4188,7 @@ class LiveScanner:
             self._wunsch_blinken(grund)
         for k in (self.k_sammlung, self.k_merken, self.k_liste):
             k.config(state="normal")
+        self._stern_setzen(bool(info.get("wanted")))
         if still:
             return
         if schon_da:
@@ -3949,6 +4265,8 @@ class LiveScanner:
             self.post.put(("verlauf",
                            f"{treffer['item_id']} – {ergebnis}{zusatz}"))
             self.post.put(("preis-leeren", None))
+            if was == "Merken":
+                self.post.put(("gemerkt", treffer))
         threading.Thread(target=lauf, daemon=True).start()
 
     def in_ablage(self):

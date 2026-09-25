@@ -1940,6 +1940,84 @@ pruefe("Quarantäne" in _roh_upd.split("def update_fenster")[1][:900],
 pruefe("webbrowser.open(seite)" in _roh_upd.split("def update_fenster")[1],
        "der Weg über die Seite bleibt daneben stehen")
 
+# ============================================ Die Handschrift der App
+# Eigene Knöpfe statt ttk – nach außen müssen sie sich benehmen wie vorher,
+# sonst bräche jede Stelle, die `config(state=...)` setzt.
+abschnitt("13. Knöpfe und Pillen in der Handschrift der App")
+wurzel, app = fenster()
+pruefe(isinstance(app.k_sammlung, livescan.Knopf)
+       and isinstance(app.ausloeser, livescan.Knopf),
+       "Auslöser und Sammlung sind eigene Knöpfe")
+gedrueckt = []
+_k = livescan.Knopf(app.innen, text="Probe", command=lambda: gedrueckt.append(1))
+_k.config(state="disabled")
+_k.invoke()
+pruefe(gedrueckt == [] and _k.cget("state") == "disabled",
+       "ein gesperrter Knopf löst nichts aus")
+_k.config(state="normal")
+_k.invoke()
+pruefe(gedrueckt == [1], "ein freier Knopf schon")
+_k.config(text="Anders")
+pruefe(_k.cget("text") == "Anders", "die Beschriftung lässt sich tauschen")
+
+# Die Pille hängt an der Variablen: Beides muss in beide Richtungen gehen.
+app.zustand.set("used")
+pille = [w for w in app.preisfeld.master.winfo_children()
+         if isinstance(w, livescan.Pille)][0]
+pruefe(pille.get() == "used", "die Zustandspille zeigt die Variable")
+wurzel.update_idletasks()
+breite_gebraucht = pille._breiten[0]
+class _Klick:
+    def __init__(self, x): self.x, self.y = x, 5
+pille._geklickt(_Klick(pille._rand + breite_gebraucht + 5))
+pruefe(app.zustand.get() == "new", "ein Klick auf „Neu“ setzt den Zustand")
+pruefe(app.daten.get("zustand") == "new", "und er wird gemerkt")
+gemerkt_stufe = []
+app.empfindlich._befehl = lambda: gemerkt_stufe.append(app.empfindlich.get())
+app.empfindlich._geklickt(_Klick(app.empfindlich._rand + 1))
+pruefe(app.empfindlich.get() == list(livescan.EMPFINDLICHKEIT)[0]
+       and gemerkt_stufe, "die Empfindlichkeit wechselt per Klick")
+
+# Der Stern: gefüllt, wenn die Figur schon auf der Wunschliste steht.
+app._kandidaten_zeigen([artikel("sw0036", 62, "Stormtrooper", wanted=True)])
+takt(wurzel)
+pruefe(app.k_merken.cget("text") == "★" and app.k_merken._an,
+       "auf der Wunschliste steht ein gelber ★")
+trennen(app)
+app._kandidaten_zeigen([artikel("sw0097", 41, "Stormtrooper, Black Head")])
+takt(wurzel)
+pruefe(app.k_merken.cget("text") == "☆" and not app.k_merken._an,
+       "sonst ein leerer ☆")
+app.post.put(("gemerkt", app.treffer))
+takt(wurzel)
+pruefe(app.k_merken.cget("text") == "★", "nach dem Merken füllt er sich")
+app._treffer_leeren()
+pruefe(app.k_merken.cget("text") == "☆"
+       and app.k_merken.cget("state") == "disabled",
+       "eine leere Karte hat einen leeren, gesperrten Stern")
+
+# Unter Windows setzt main() `tk scaling` nach dem Bildschirm – bei 150 %
+# (144 dpi) sind das 2 Bildpunkte je Punkt. Dann muss der Knopf mitwachsen, sonst
+# steht große Schrift in einem kleinen Knopf.
+_vorher = float(wurzel.tk.call("tk", "scaling"))
+wurzel.tk.call("tk", "scaling", 2.0)
+_gross = livescan.Knopf(app.innen, text="＋ Zur Sammlung", hoehe=32)
+_hoch = int(_gross.cget("height"))
+_breit = int(_gross.cget("width"))
+_text = _gross._schrift.measure("＋ Zur Sammlung")
+wurzel.tk.call("tk", "scaling", _vorher)
+pruefe(_hoch >= 1.45 * int(app.k_bereich.cget("height")),
+       "bei 150 %% wächst der Knopf mit (%d px hoch)" % _hoch)
+pruefe(_breit > _text, "und die Beschriftung passt hinein")
+
+# Nach einem Wechsel zwischen Tag und Nacht zeichnen sich alle neu.
+livescan.farben_setzen(wurzel, dunkel=True)
+livescan.bauteile_auffrischen()
+pruefe(app.k_sammlung.find_all(), "nachts gezeichnet")
+livescan.farben_setzen(wurzel, dunkel=False)
+livescan.bauteile_auffrischen()
+wurzel.destroy()
+
 # ============================================================ Bilanz
 print("\n" + "─" * 58)
 print("\033[1m%d Proben bestanden, %d fehlgeschlagen\033[0m"

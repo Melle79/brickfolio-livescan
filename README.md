@@ -23,8 +23,8 @@ der App, genau wie es der Browser tut:
 | `POST /api/login` | einmal anmelden, Token merken |
 | `POST /api/scan` | den Ausschnitt erkennen lassen |
 | `POST /api/suggest_info` | Jahr, Ø-Preise, „wie oft habt ihr das schon" |
-| `POST /api/collection` | ＋ Sammlung |
-| `POST /api/wanted` | ☆ Merken |
+| `POST /api/collection` | ＋ Zur Sammlung |
+| `POST /api/wanted` | ☆ (Merken) |
 | `GET/POST /api/lists…` | 🛒 auf eine Einkaufsliste |
 
 Ändert sich an der App nichts, ändert sich hier auch nichts.
@@ -214,11 +214,13 @@ endet, nicht an einer festen Marke. Bei einer Figur aus dreißig Sets stehen
 trotzdem nicht alle da: Zeile 2 zeigt vier deiner Sets, Zeile 3 acht aus dem
 Katalog, dahinter jeweils „und N weitere".
 
-**Zustand und Einkauf** stehen darüber und gelten für „＋ Sammlung" und
-„🛒 drauf" – die Wunschliste kennt beides nicht und lässt es liegen:
+**Zustand und Einkauf** stehen darüber und gelten für „＋ Zur Sammlung"
+und 🛒 – die Wunschliste kennt beides nicht und lässt es liegen:
 
 ```
-Zustand:  (•) Gebraucht   ( ) Neu       Einkauf: [ 7,00 ] €
+[ Gebraucht | Neu ]   Einkauf: [ 7,00 ] €
+[      ＋ Zur Sammlung      ]  [☆]  [🛒]
+[ Flohmarkt 24.09.       ▾ ]  [↻]  [＋ Liste]
 ```
 
 Der Preis darf leer bleiben, dann trägt die App keinen ein. Komma oder Punkt
@@ -227,8 +229,16 @@ nächste Figur stumm den Preis der vorigen. Der **Zustand bleibt dagegen
 stehen** und überdauert auch den Neustart: Auf einem Flohmarkt ist fast alles
 gebraucht.
 
-Die drei Knöpfe darunter tun genau das, was die Trefferkarte in der App
-auch tut.
+Die Knöpfe darunter sehen aus und tun, was die Trefferkarte in der App
+auch tut: **„＋ Zur Sammlung"** breit und grün, daneben **☆** für die
+Wunschliste und **🛒** für die Liste, die darunter gewählt ist. Steht die
+Figur schon auf der Wunschliste, ist der Stern gefüllt und gelb (★).
+
+Überhaupt trägt der Scanner seit 1.9.0 die Handschrift der App: dunkle
+Kante, runde Ecken, Gelb für den Auslöser, Gebraucht/Neu und die
+Empfindlichkeit als Pille. Die Knöpfe zeichnet er selbst – die Systemknöpfe
+nehmen unter macOS weder Farbe noch Kante an. Nachts werden die weißen
+Knöpfe dunkelgrau, Gelb und Grün bleiben.
 
 **Der Verlauf unten** hält fest, was war – mit **Nummern**, nicht nur mit
 Anzahlen:
@@ -374,8 +384,7 @@ Finder und das Ziehen.
 
 ## Von selbst auslösen
 
-**⏱ Von selbst, wenn sich im Bereich etwas tut** – der Haken unter den
-Bereichsknöpfen. Ist er gesetzt, schaut der Scanner dem gemerkten Bereich zu
+**⏱ Von selbst auslösen** – der Haken unter den Bereichsknöpfen. Ist er gesetzt, schaut der Scanner dem gemerkten Bereich zu
 und schickt den Ausschnitt, sobald dort eine neue Figur hochgehalten wird.
 Du musst nichts mehr drücken.
 
@@ -388,8 +397,8 @@ Treffer als schlechtes Licht.
 ⏱ still  ·  Bewegung 0.4  ·  3 Anfragen in der Minute
 ```
 
-Diese Zeile sagt jederzeit, was der Wächter sieht. **Empfindlichkeit** daneben
-stellt ein, ab wann eine Änderung eine ist – ein Bildschirmabzug ist
+Diese Zeile sagt jederzeit, was der Wächter sieht. **Empfindlichkeit** rechts
+neben dem Haken (hoch · mittel · niedrig) stellt ein, ab wann eine Änderung eine ist – ein Bildschirmabzug ist
 pixelgenau, ein Videobild rauscht immer ein wenig. Steht in der Zeile dauernd
 Bewegung, obwohl nichts passiert: eine Stufe unempfindlicher. Reagiert er auf
 neue Figuren nicht: eine Stufe empfindlicher.
@@ -530,7 +539,7 @@ die später als Foto am Artikel hängt.
 **Eine neue Ansicht reißt die Auswahl nicht weg.** Habt ihr auf die zweite
 Variante geklickt, bleibt sie ausgewählt, auch wenn die Sortierung sich
 ändert. Das ist keine Bequemlichkeit, sondern Sicherheit: Sonst drehte sich
-die Scheibe genau in dem Moment weiter, in dem ihr auf „＋ Sammlung" zielt,
+die Scheibe genau in dem Moment weiter, in dem ihr auf „＋ Zur Sammlung" zielt,
 und der Klick legte etwas anderes an.
 
 Ebenso bleibt es **still**: Ein Wunsch klingt nur, wenn er **neu**
