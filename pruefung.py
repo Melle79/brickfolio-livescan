@@ -2110,6 +2110,23 @@ pruefe(angelegt == [1] and app.k_liste.cget("text") == "🛒 Auf die Liste",
        "ohne Liste öffnet 🛒 das Anlegen")
 wurzel.destroy()
 
+# ================================ Die Empfindlichkeit gehört zum Haken
+abschnitt("15. Die Empfindlichkeit steht beim Haken und ist blass, solange er aus ist")
+wurzel, app = fenster()
+pruefe(app.empfindlich.master is app.k_automatik.master,
+       "Pille und Haken stehen in derselben Zeile")
+pruefe(app.empfindlich.pack_info().get("side") == "left",
+       "und zwar direkt dahinter, nicht rechts am Rand")
+app.automatik.set(False)
+pruefe(app.empfindlich.cget("state") == "disabled", "Haken aus: blass")
+app.automatik.set(True)
+pruefe(app.empfindlich.cget("state") == "normal", "Haken an: gilt")
+app.automatik.set(False)
+app.empfindlich._geklickt(type("K", (), {"x": app.empfindlich._rand + 1})())
+pruefe(app.empfindlich.get() == list(livescan.EMPFINDLICHKEIT)[0],
+       "blass ist sie trotzdem wählbar – vor dem Einschalten")
+wurzel.destroy()
+
 # ============================================================ Bilanz
 print("\n" + "─" * 58)
 print("\033[1m%d Proben bestanden, %d fehlgeschlagen\033[0m"

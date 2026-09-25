@@ -406,8 +406,9 @@ Treffer als schlechtes Licht.
 ⏱ still  ·  Bewegung 0.4  ·  3 Anfragen in der Minute
 ```
 
-Diese Zeile sagt jederzeit, was der Wächter sieht. **Empfindlichkeit** rechts
-neben dem Haken (hoch · mittel · niedrig) stellt ein, ab wann eine Änderung eine ist – ein Bildschirmabzug ist
+Diese Zeile sagt jederzeit, was der Wächter sieht. **Empfindlichkeit** direkt
+hinter dem Haken (hoch · mittel · niedrig) stellt ein – blass, solange der
+Haken aus ist, denn nur dafür gilt sie –, ab wann eine Änderung eine ist – ein Bildschirmabzug ist
 pixelgenau, ein Videobild rauscht immer ein wenig. Steht in der Zeile dauernd
 Bewegung, obwohl nichts passiert: eine Stufe unempfindlicher. Reagiert er auf
 neue Figuren nicht: eine Stufe empfindlicher.

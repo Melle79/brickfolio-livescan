@@ -75,7 +75,7 @@ from tkinter import ttk
 
 # Steht auch im Info.plist des Bündels. setup.py liest sie von hier,
 # damit sie nicht an zwei Stellen auseinanderläuft; pruefung.py wacht darüber.
-VERSION = "1.9.3"
+VERSION = "1.9.4"
 
 # Auf welchem System laufen wir? Der Mac-Weg bleibt unangetastet; fuer
 # Windows stehen daneben eigene Zweige. Alles andere (Linux) faellt auf den
@@ -1395,6 +1395,7 @@ _KNOPF_HELL = {
     "kante": "#1D1D1B", "schatten": "#B9BCC1",
     "aus": ("#F1F2F4", "#9A9DA2", "#C4C7CC"),        # Fläche, Schrift, Kante
     "spur": "#E1E3E7", "spur_schrift": "#6B6E73",
+    "blass": "#D3D6DB", "blass_schrift": "#9A9DA2",
 }
 # Nachts keine weiße Fläche – sie leuchtete im dunklen Fenster wie ein
 # Loch. Gelb und Grün bleiben: Sie tragen die Bedeutung, und auf Dunkel
@@ -1407,6 +1408,7 @@ _KNOPF_DUNKEL = {
     "kante": "#8E8E93", "schatten": "#141416",
     "aus": ("#2C2C2E", "#6E6E73", "#48484A"),
     "spur": "#3A3A3C", "spur_schrift": "#A8A8A8",
+    "blass": "#55555A", "blass_schrift": "#7C7C80",
 }
 
 
@@ -1595,6 +1597,7 @@ class Pille(tk.Canvas):
                          background=_grund(master), cursor=ZEIGEHAND)
         self._werte = list(werte)             # [(wert, beschriftung), …]
         self._var = variable
+        self._zustand = "normal"
         self._befehl = command
         self._schrift = _fett(groesse)
         self._k = _punkt(self)
@@ -1615,6 +1618,24 @@ class Pille(tk.Canvas):
 
     def set(self, wert):
         self._var.set(wert)
+
+    def configure(self, cnf=None, **kw):
+        """`state="disabled"` macht die Pille **blass** – klickbar bleibt
+        sie: Die Stufe darf man wählen, bevor sie gilt."""
+        if cnf:
+            kw.update(cnf)
+        if "state" in kw:
+            self._zustand = kw.pop("state")
+            self._zeichnen()
+        if kw:
+            super().configure(**kw)
+
+    config = configure
+
+    def cget(self, schluessel):
+        if schluessel == "state":
+            return self._zustand
+        return super().cget(schluessel)
 
     def _geklickt(self, ereignis):
         x = self._rand
@@ -1638,12 +1659,16 @@ class Pille(tk.Canvas):
         x = r
         for (wert, text), breite in zip(self._werte, self._breiten):
             gewaehlt = self._var.get() == wert
+            blass = self._zustand == "disabled"
             if gewaehlt:
                 _rund(self, x, r, x + breite, h - r, (h - 2 * r) / 2,
-                      fill="#FFCF00", outline="")
+                      fill=f["blass"] if blass else "#FFCF00", outline="")
+            if blass:
+                farbe = f["spur_schrift"] if gewaehlt else f["blass_schrift"]
+            else:
+                farbe = "#1D1D1B" if gewaehlt else f["spur_schrift"]
             self.create_text(x + breite / 2, h / 2, text=text,
-                             font=self._schrift,
-                             fill="#1D1D1B" if gewaehlt else f["spur_schrift"])
+                             font=self._schrift, fill=farbe)
             x += breite
 
 
@@ -2314,16 +2339,21 @@ class LiveScanner:
             state="normal" if self.bereich else "disabled")
         self.k_automatik.pack(side="left")
         # Als Pille sieht man alle drei Stufen, statt sie hinter einem
-        # Auswahlfeld zu suchen. Sie steht in dieser Zeile, weil sie nur für
-        # das Auslösen von selbst gilt.
+        # Auswahlfeld zu suchen. **Sie gehört zum Haken** und steht darum
+        # direkt dahinter, nicht rechts am Rand – dort wirkte sie wie eine
+        # eigene Einstellung (Rückmeldung vom 25.09.2026). Solange der Haken
+        # aus ist, ist sie blass: gilt gerade nicht.
         self.empfindlich_var = tk.StringVar(
             value=self.daten.get("empfindlichkeit", "mittel"))
+        self.empfindlich_titel = ttk.Label(
+            autoreihe, text="· Empfindlichkeit", foreground=FARBEN["leise"])
+        self.empfindlich_titel.pack(side="left", padx=(4, 6))
         self.empfindlich = Pille(autoreihe, [(w, w) for w in EMPFINDLICHKEIT],
                                  self.empfindlich_var, groesse=11, hoehe=26,
                                  command=self._empfindlich_merken)
-        self.empfindlich.pack(side="right")
-        ttk.Label(autoreihe, text="Empfindlichkeit",
-                  foreground=FARBEN["leise"]).pack(side="right", padx=(0, 6))
+        self.empfindlich.pack(side="left")
+        self.automatik.trace_add("write", lambda *_e: self._empfindlich_faerben())
+        self._empfindlich_faerben()
         # Eigene Zeile, nicht die allgemeine Statuszeile: Der Wächter meldet
         # sich jede Sekunde, und er soll dabei nicht überschreiben, was gerade
         # zum Treffer dasteht.
@@ -3517,6 +3547,13 @@ class LiveScanner:
         self.stufe = self.empfindlich.get()
         self.daten["empfindlichkeit"] = self.stufe
         schreiben(self.daten)
+
+    def _empfindlich_faerben(self):
+        """Pille und Titel blass, solange nicht von selbst ausgelöst wird."""
+        an = bool(self.automatik.get())
+        self.empfindlich.config(state="normal" if an else "disabled")
+        self.empfindlich_titel.config(
+            foreground=FARBEN["leise"] if an else FARBEN["still"])
 
     def _automatik_schalten(self):
         """Den Wächter an- oder abschalten."""
