@@ -151,7 +151,7 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: Ansicht-Windows
-          path: ansicht-windows.png
+          path: ansicht-windows*.png
 
       - name: cloudflared holen
         # Kommt mit ins Paket, damit niemand etwas nachinstallieren muss,

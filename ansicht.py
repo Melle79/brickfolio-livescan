@@ -19,6 +19,7 @@ import tkinter as tk
 import livescan
 
 ZIEL = os.path.abspath(sys.argv[1] if len(sys.argv) > 1 else "ansicht.png")
+UNTEN = os.path.splitext(ZIEL)[0] + "-unten.png"
 ORDNER = tempfile.mkdtemp(prefix="livescan-ansicht-")
 livescan.EINSTELLUNGEN = os.path.join(ORDNER, "einstellungen.json")
 livescan.VERLAUF_DATEI = os.path.join(ORDNER, "verlauf.json")
@@ -48,18 +49,25 @@ class Attrappe:
                 for t in artikel}
 
 
-def knipsen(wurzel):
+def _abbild(wurzel, ziel):
     wurzel.update_idletasks()
     x, y = wurzel.winfo_rootx(), wurzel.winfo_rooty()
     b, h = wurzel.winfo_width(), wurzel.winfo_height()
     if livescan.IST_WINDOWS:
         from PIL import ImageGrab
-        ImageGrab.grab(bbox=(x, y, x + b, y + h), all_screens=True).save(ZIEL)
+        ImageGrab.grab(bbox=(x, y, x + b, y + h), all_screens=True).save(ziel)
     else:
         subprocess.run(["screencapture", "-x", "-R",
-                        f"{x},{y},{b},{h}", ZIEL])
-    print("Bild:", ZIEL, f"({b}×{h})")
-    wurzel.destroy()
+                        f"{x},{y},{b},{h}", ziel])
+    print("Bild:", ziel, f"({b}×{h})")
+
+
+def knipsen(wurzel, app):
+    """Oben und – ans Ende geschoben – unten. Auf einem niedrigen Schirm
+    (etwa dem des Bau-Runners) stünde sonst die Knopfreihe nie im Bild."""
+    _abbild(wurzel, ZIEL)
+    app.leinwand.yview_moveto(1.0)
+    wurzel.after(300, lambda: (_abbild(wurzel, UNTEN), wurzel.destroy()))
 
 
 def main():
@@ -84,7 +92,7 @@ def main():
         ])
 
     wurzel.after(400, zeigen)
-    wurzel.after(2500, lambda: knipsen(wurzel))
+    wurzel.after(2500, lambda: knipsen(wurzel, app))
     wurzel.mainloop()
 
 
